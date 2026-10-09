@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { getAnimations, getModel } from '../assets/loader';
-import { camperName, type AssetName } from '../assets/manifest';
+import type { AssetName } from '../assets/manifest';
+import { CounselorActor } from './counselors';
 import { damp, lerpAngle } from './interp';
 import type { PlayerState } from '../net/protocol';
 
@@ -16,7 +17,7 @@ function nameTag(text: string): THREE.Sprite {
   return s;
 }
 
-/** Animated imported model (camper or monster) driven by a mixer. */
+/** Animated imported model used for the creature. */
 export class Actor {
   root = new THREE.Group();
   private mixer: THREE.AnimationMixer;
@@ -43,7 +44,7 @@ export class Actor {
 }
 
 export class RemotePlayer {
-  actor: Actor;
+  actor: CounselorActor;
   tag: THREE.Sprite;
   flash: THREE.SpotLight;
   pos = new THREE.Vector3();
@@ -51,7 +52,7 @@ export class RemotePlayer {
   target: PlayerState | null = null;
   alive = true;
   constructor(public id: number, public name: string, scene: THREE.Scene) {
-    this.actor = new Actor(camperName(id));
+    this.actor = new CounselorActor(id);
     this.tag = nameTag(name);
     this.actor.root.add(this.tag);
     this.flash = new THREE.SpotLight('#FFF1CF', 0, 26, 0.5, 0.5, 1.6);
@@ -71,11 +72,10 @@ export class RemotePlayer {
     this.yaw = lerpAngle(this.yaw, t.yaw, k);
     this.actor.root.position.copy(this.pos);
     this.actor.root.rotation.y = this.yaw + Math.PI;
-    this.actor.root.scale.y = t.crouch ? 0.8 : 1;
     this.actor.play(t.moving ? (t.sprint ? 'sprint' : 'walk') : 'idle');
     this.flash.intensity = t.flash ? 60 : 0;
     this.actor.root.visible = this.alive;
-    this.actor.update(dt);
+    this.actor.update(dt, t);
   }
   dispose(scene: THREE.Scene): void { scene.remove(this.actor.root); }
 }
