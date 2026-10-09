@@ -77,8 +77,8 @@ export function buildLayout(seed: number, need = 3): Layout {
   }
 
   const decals: Decal[] = [];
-  CABINS.slice(0, 4).forEach((_, i) => { for (let side = 0; side < 2; side++) { const text = pickGraffiti(rng); decals.push({ host: i, side, text, creepy: text.startsWith('I SAW') || text.startsWith('IT ') || text.startsWith('DON') }); } });
-  decals.push({ host: 4, side: 0, text: 'DO NOT EAT THE CHILI', creepy: false });
+  CABINS.slice(0, 4).forEach((_, i) => { for (let side = 0; side < 2; side++) { const text = pickGraffiti(rng); decals.push({ host: i + 1, side, text, creepy: text.startsWith('I SAW') || text.startsWith('IT ') || text.startsWith('DON') }); } });
+  decals.push({ host: 9, side: 0, text: 'DO NOT EAT THE CHILI', creepy: false });
 
   const items: ItemSpawn[] = [];
   const lootModels: AssetName[] = ['lantern', 'radio', 'backpack', 'cooler', 'lantern', 'radio', 'backpack', 'cooler'];
