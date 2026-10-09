@@ -28,7 +28,6 @@ export class Voice {
       });
       this.callAll();
       clearInterval(this.keepAlive);
-      // Roster and WebRTC timing can race on mobile. Reconcile calls periodically and recover dropped peers.
       this.keepAlive = window.setInterval(() => this.callAll(), 1800);
       return true;
     } catch (e) {
@@ -69,10 +68,10 @@ export class Voice {
       a.createMediaStreamSource(remote).connect(panner).connect(a.destination);
       this.panners.set(call.peer, panner);
 
-      // Safari/iPad is more reliable when the remote MediaStream is also attached to a real media element.
+      // Keeping an actual audio element attached improves WebRTC reliability on iPad/Safari.
       let el = this.mediaEls.get(call.peer);
       if (!el) {
-        el = document.createElement('audio'); el.autoplay = true; el.playsInline = true; el.muted = true;
+        el = document.createElement('audio'); el.autoplay = true; el.muted = true;
         el.style.display = 'none'; document.body.append(el); this.mediaEls.set(call.peer, el);
       }
       el.srcObject = remote; void el.play().catch(() => undefined);
