@@ -2,7 +2,9 @@ import type { Layout } from '../game/layout';
 import { WORLD_HALF } from '../game/constants';
 import { LANDMARKS } from '../game/landmarks';
 
-/** Retro illustrated top-down map. It intentionally shows landmarks, not hidden camper locations. */
+export interface MapPlayer { x: number; z: number; name: string }
+
+/** Retro illustrated top-down map. It shows counselors and landmarks, but never hidden campers. */
 export class CampMap {
   root = document.createElement('div');
   private canvas = document.createElement('canvas');
@@ -11,6 +13,7 @@ export class CampMap {
   private px = 0;
   private pz = 0;
   private yaw = 0;
+  private players: MapPlayer[] = [];
 
   constructor(private layout: Layout) {
     this.root.className = 'camp-map hidden';
@@ -21,7 +24,7 @@ export class CampMap {
     this.ctx = this.canvas.getContext('2d')!;
     const hint = document.createElement('div');
     hint.className = 'camp-map-hint';
-    hint.textContent = 'M to close · campers are not marked';
+    hint.textContent = 'M to close · counselors are marked · campers are not';
     this.root.append(title, this.canvas, hint);
     this.draw();
   }
@@ -35,8 +38,8 @@ export class CampMap {
   hide(): void { this.visible = false; this.root.classList.add('hidden'); }
   get open(): boolean { return this.visible; }
 
-  update(x: number, z: number, yaw: number): void {
-    this.px = x; this.pz = z; this.yaw = yaw;
+  update(x: number, z: number, yaw: number, players: MapPlayer[] = []): void {
+    this.px = x; this.pz = z; this.yaw = yaw; this.players = players;
     if (this.visible) this.draw();
   }
 
@@ -83,7 +86,6 @@ export class CampMap {
       }
     }
 
-    // Named player-enterable landmark buildings.
     c.font = 'bold 11px Rockwell, Georgia, serif';
     for (const b of LANDMARKS) {
       const x = this.sx(b.x), y = this.sy(b.z), scale = 2.05;
@@ -106,7 +108,16 @@ export class CampMap {
     ];
     labels.forEach(([text, x, z]) => c.fillText(text, this.sx(x) + 9, this.sy(z) - 9));
 
+    c.font = 'bold 12px Rockwell, Georgia, serif';
+    for (const p of this.players) {
+      const x = this.sx(p.x), y = this.sy(p.z);
+      c.beginPath(); c.arc(x, y, 6, 0, Math.PI * 2); c.fillStyle = '#008080'; c.fill();
+      c.strokeStyle = '#fffdd0'; c.lineWidth = 2; c.stroke();
+      c.fillStyle = '#5c4033'; c.fillText(p.name.slice(0, 10), x + 8, y - 7);
+    }
+
     const x = this.sx(this.px), y = this.sy(this.pz);
     c.save(); c.translate(x, y); c.rotate(-this.yaw); c.beginPath(); c.moveTo(0, -11); c.lineTo(7, 8); c.lineTo(0, 4); c.lineTo(-7, 8); c.closePath(); c.fillStyle = '#9b2226'; c.fill(); c.strokeStyle = '#fffdd0'; c.lineWidth = 2; c.stroke(); c.restore();
+    c.font = 'bold 12px Rockwell, Georgia, serif'; c.fillStyle = '#9b2226'; c.fillText('YOU', x + 10, y + 4);
   }
 }
