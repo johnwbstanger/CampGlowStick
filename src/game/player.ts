@@ -36,10 +36,7 @@ export class LocalPlayer {
 
   private onKeyDown = (e: KeyboardEvent): void => {
     if (!e.repeat && e.code === 'KeyF') this.flash = !this.flash;
-    if (!e.repeat && e.code === 'Space') {
-      e.preventDefault();
-      this.spaceDownAt = performance.now();
-    }
+    if (!e.repeat && e.code === 'Space') { e.preventDefault(); this.spaceDownAt = performance.now(); }
     if (e.code.startsWith('Arrow')) e.preventDefault();
     this.keys.add(e.code);
   };
@@ -83,21 +80,11 @@ export class LocalPlayer {
     this.jumpVelocity = 0; this.grounded = true;
   }
   pressed(code: string): boolean { return this.keys.has(code); }
-
-  /** Touch/virtual-stick input in the range -1..1. */
-  setTouchMove(x: number, y: number): void {
-    this.touchMoveX = THREE.MathUtils.clamp(x, -1, 1);
-    this.touchMoveY = THREE.MathUtils.clamp(y, -1, 1);
-  }
+  setTouchMove(x: number, y: number): void { this.touchMoveX = THREE.MathUtils.clamp(x, -1, 1); this.touchMoveY = THREE.MathUtils.clamp(y, -1, 1); }
   setTouchSprint(on: boolean): void { this.touchSprint = on; }
   setTouchCrouch(on: boolean): void { this.touchCrouch = on; }
   toggleFlash(): void { this.flash = !this.flash; }
-  jump(): void {
-    if (this.grounded && this.alive) {
-      this.jumpVelocity = JUMP_SPEED;
-      this.grounded = false;
-    }
-  }
+  jump(): void { if (this.grounded && this.alive) { this.jumpVelocity = JUMP_SPEED; this.grounded = false; } }
   lookDelta(dx: number, dy: number): void {
     this.yaw -= dx * 0.0022;
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - dy * 0.0022));
@@ -105,7 +92,6 @@ export class LocalPlayer {
 
   update(dt: number, colliders: Box[], carry: number): void {
     const k = this.keys;
-    // Arrow keys deliberately look rather than move, useful on iPad hardware keyboards too.
     if (k.has('ArrowLeft')) this.yaw += KEY_LOOK * dt;
     if (k.has('ArrowRight')) this.yaw -= KEY_LOOK * dt;
     if (k.has('ArrowUp')) this.pitch = Math.min(1.45, this.pitch + KEY_LOOK * 0.72 * dt);
@@ -113,7 +99,6 @@ export class LocalPlayer {
 
     let f = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0);
     let s = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0);
-    // Left touch stick blends with keyboard and is analog.
     if (Math.abs(this.touchMoveY) > Math.abs(f)) f = -this.touchMoveY;
     if (Math.abs(this.touchMoveX) > Math.abs(s)) s = this.touchMoveX;
     const heldSpaceMs = k.has('Space') && this.spaceDownAt ? performance.now() - this.spaceDownAt : 0;
@@ -125,14 +110,22 @@ export class LocalPlayer {
     this.stamina = stepStamina(this.stamina, dt, this.sprint, carry);
     if (this.stamina <= 0) this.exhausted = true;
 
-    const ox = this.pos.x, oz = this.pos.z;
     if (this.moving) {
       const speed = this.crouch ? PLAYER.crouch : this.sprint ? PLAYER.sprint : PLAYER.walk;
       const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw), len = Math.max(1, Math.hypot(f, s));
-      this.pos.x += ((-sin * f + cos * s) / len) * speed * dt;
-      this.pos.z += ((-cos * f - sin * s) / len) * speed * dt;
-      if (isDeepWater(this.pos.x, this.pos.z, this.layout)) { this.pos.x = ox; this.pos.z = oz; }
-      resolveCapsule(this.pos, PLAYER.radius, this.crouch ? PLAYER.crouchHeight : PLAYER.height, colliders, WORLD_HALF);
+      const dx = ((-sin * f + cos * s) / len) * speed * dt;
+      const dz = ((-cos * f - sin * s) / len) * speed * dt;
+      const h = this.crouch ? PLAYER.crouchHeight : PLAYER.height;
+      const ox = this.pos.x, oz = this.pos.z;
+
+      // Resolve each axis separately. This produces natural wall sliding and eliminates most "hit nothing and stop" corner snags.
+      this.pos.x += dx;
+      resolveCapsule(this.pos, PLAYER.radius, h, colliders, WORLD_HALF);
+      if (isDeepWater(this.pos.x, this.pos.z, this.layout)) this.pos.x = ox;
+
+      this.pos.z += dz;
+      resolveCapsule(this.pos, PLAYER.radius, h, colliders, WORLD_HALF);
+      if (isDeepWater(this.pos.x, this.pos.z, this.layout)) this.pos.z = oz;
     }
 
     const groundY = terrainHeight(this.pos.x, this.pos.z, this.layout);
@@ -140,11 +133,7 @@ export class LocalPlayer {
     if (!this.grounded || this.jumpVelocity > 0) {
       this.jumpVelocity -= GRAVITY * dt;
       this.pos.y += this.jumpVelocity * dt;
-      if (this.pos.y <= groundY) {
-        this.pos.y = groundY;
-        this.jumpVelocity = 0;
-        this.grounded = true;
-      }
+      if (this.pos.y <= groundY) { this.pos.y = groundY; this.jumpVelocity = 0; this.grounded = true; }
     }
 
     this.eye += ((this.crouch ? PLAYER.crouchEye : PLAYER.eye) - this.eye) * damp(12, dt);
