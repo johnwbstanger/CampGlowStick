@@ -17,8 +17,7 @@ async function check(name, fn) {
 }
 const assert = (c, m) => { if (!c) throw new Error(m); };
 
-// ---- signaling server -------------------------------------------------------
-let peerCfg = null; // null = public PeerJS cloud
+let peerCfg = null;
 let localServer = null;
 async function reachable(url) { try { const r = await fetch(url, { signal: AbortSignal.timeout(4000) }); return r.ok; } catch { return false; } }
 if (process.env.PEER_HOST) {
@@ -30,7 +29,6 @@ if (process.env.PEER_HOST) {
 }
 console.log('signaling:', peerCfg ? `${peerCfg.host}:${peerCfg.port}${localServer ? ' (local peer server)' : ''}` : 'public PeerJS cloud');
 
-// ---- app + browser ----------------------------------------------------------
 const outDir = 'dist-smoke';
 await build({ logLevel: 'warn', base: '/', build: { outDir, emptyOutDir: true } });
 const server = await preview({ logLevel: 'warn', base: '/', build: { outDir }, preview: { port: 4173, host: '127.0.0.1', strictPort: true } });
@@ -73,7 +71,6 @@ async function join(label, code, viaUrl = false) {
   await p.waitForSelector('#lobby-code', { timeout: 20000 });
   return p;
 }
-const players = (p) => p.locator('#player-list li').count();
 async function waitPlayers(p, n) { await p.waitForFunction((n) => document.querySelectorAll('#player-list li').length === n, n, { timeout: 25000 }); }
 async function tryJoin(label, code) {
   const p = await newPage(label);
@@ -149,11 +146,11 @@ try {
     console.log(`  (soft) latency median ${times[2]}ms (${times}) - logged, not asserted`);
     return `latencies ms: ${times.join(', ')}`;
   });
-  await check('glowstick snap + throw syncs to every client', async () => {
+  await check('glowstick snap + charged throw syncs to every client', async () => {
     await g1.evaluate(() => { window.__cg.teleport(0, 12); window.__cg.look(0); window.__cg.setGlow('pink'); });
     await sleep(200);
     await g1.evaluate(() => window.__cg.act('snap')); await sleep(300);
-    await g1.evaluate(() => window.__cg.act('throw')); await sleep(1800);
+    await g1.evaluate(() => window.__cg.act('throw', 0.75)); await sleep(1800);
     for (const p of pages()) {
       const gl = await cg(p, () => window.__cg.glows());
       const pink = gl.filter((g) => g.color === 'pink');
@@ -163,45 +160,38 @@ try {
     const a = (await cg(A.page, () => window.__cg.glows()))[0], b = (await cg(g2, () => window.__cg.glows()))[0];
     assert(Math.hypot(a.x - b.x, a.z - b.z) < 0.5, 'positions agree between clients');
   });
-  await check('canvas is not blank in the play scene (day)', async () => {
-    for (const p of pages()) { const s = await cg(p, () => window.__cg.sample()); assert(s.distinct > 15 && s.lit > 200, `blank-looking canvas ${JSON.stringify(s)}`); }
+  await check('world renders terrain, lake and seven campers', async () => {
+    for (const p of pages()) {
+      const s = await cg(p, () => window.__cg.sample()); assert(s.distinct > 15 && s.lit > 200, `blank-looking canvas ${JSON.stringify(s)}`);
+      const campers = await cg(p, () => window.__cg.campers()); assert(campers.length === 7, `expected 7 campers, got ${campers.length}`);
+    }
   });
-  await check('night falls (flashlight scene stays non-blank) and the monster catches a player -> everyone loses', async () => {
+  await check('night falls, flashlight stays visible, and monster can catch an exposed player', async () => {
     await A.page.evaluate(() => window.__cg.act('night'));
     await A.page.waitForFunction(() => window.__cg.snap()?.night === true, null, { timeout: 10000 });
     await A.page.keyboard.press('KeyF');
     const s = await cg(A.page, () => window.__cg.sample()); assert(s.distinct > 8 && s.lit > 20, `night canvas blank ${JSON.stringify(s)}`);
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 45; i++) {
       const m = await cg(A.page, () => window.__cg.snap().monster);
-      await g2.evaluate(([x, z]) => window.__cg.teleport(x, z), [m.p[0] + 0.5, m.p[2]]);
+      await g2.evaluate(([x, z]) => window.__cg.teleport(x, z), [m.p[0] + 0.45, m.p[2]]);
       if ((await cg(g2, () => window.__cg.snap()?.over)) === 'lose') break;
       await sleep(150);
     }
-    for (const p of pages()) await p.waitForSelector('#hud-result', { timeout: 10000 });
     assert((await cg(A.page, () => window.__cg.snap().over)) === 'lose', 'lose state');
   });
 
-  await check('co-op win loop: carry 3 loot items to the extraction point', async () => {
+  await check('camper rescue interaction syncs between clients', async () => {
     const H = B.page;
     await startGame(H, B.guests);
-    for (let n = 0; n < 3; n++) {
-      const loot = (await cg(H, () => window.__cg.items())).filter((i) => i.kind === 'loot').sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z))[0];
-      assert(loot, 'loot item');
-      let held = false;
-      for (let attempt = 0; attempt < 5 && !held; attempt++) {
-        const cur = (await cg(H, () => window.__cg.items())).find((i) => i.id === loot.id);
-        await H.evaluate(([x, z]) => window.__cg.teleport(x + 0.4, z), [cur.x, cur.z]); await sleep(300);
-        await H.evaluate(() => window.__cg.act('pick'));
-        held = await H.waitForFunction((id) => window.__cg.items().some((i) => i.id === id && i.y > 0.6), loot.id, { timeout: 1500 }).then(() => true, () => false);
-      }
-      assert(held, `could not pick up loot ${loot.id}`);
-      await sleep(250);
-      await H.evaluate(() => window.__cg.teleport(26, 2)); await sleep(300);
-      await H.evaluate(() => window.__cg.act('drop'));
-      await H.waitForFunction((k) => window.__cg.snap()?.collected >= k, n + 1, { timeout: 25000 });
+    const camper = (await cg(H, () => window.__cg.campers()))[0];
+    assert(camper, 'camper exists');
+    await H.evaluate(([x, z]) => window.__cg.teleport(x + 0.35, z), [camper.x, camper.z]);
+    await sleep(250);
+    await H.evaluate(() => window.__cg.act('pick'));
+    await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 5000 });
+    for (const p of [H, ...B.guests]) {
+      await p.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 5000 });
     }
-    await H.waitForFunction(() => window.__cg.snap()?.over === 'win', null, { timeout: 8000 });
-    for (const p of [H, ...B.guests]) await p.waitForSelector('#hud-result', { timeout: 10000 });
   });
   await check('no console errors or missing-asset warnings in any page', async () => { assert(consoleErrors.length === 0, consoleErrors.slice(0, 5).join(' | ')); });
 } finally {

@@ -1,7 +1,10 @@
 import { GLOW_COLORS } from '../game/constants';
 import { h } from './dom';
 
-export interface HudData { stamina: number; held: string; glow: string; night: boolean; time: number; collected: number; need: number; names: string[]; fps: number }
+export interface HudData {
+  stamina: number; held: string; glow: string; night: boolean; time: number;
+  collected: number; need: number; rescued: number; camperNeed: number; names: string[]; fps: number;
+}
 
 export class Hud {
   root = h('div', { id: 'hud' });
@@ -19,8 +22,9 @@ export class Hud {
 
   constructor() {
     this.tl.append(this.objective,
-      h('div', {}, 'WASD move · Shift sprint · C crouch · E pick up/drop · Click throw'),
-      h('div', {}, 'G snap glowstick · 1-5 colour · F flashlight · N day/night (host)'));
+      h('div', {}, 'WASD move · Shift sprint · Tap Space jump · Hold Space crouch'),
+      h('div', {}, 'Click / E interact · Hold click then release to throw · R place/drop · F flashlight'),
+      h('div', {}, 'G snap glowstick · 1-5 colour · N day/night (host debug)'));
     this.root.append(this.tl, this.tr, h('div', { cls: 'cross' }), this.toastEl,
       h('div', { cls: 'bl' }, this.info, h('div', { cls: 'stam' }, this.bar)));
   }
@@ -28,8 +32,9 @@ export class Hud {
   private setText(el: HTMLElement, text: string): void { if (el.textContent !== text) el.textContent = text; }
 
   update(d: HudData): void {
-    this.setText(this.objective, `${d.night ? 'NIGHT' : 'DAY'} · loot ${d.collected}/${d.need} → bring it to the bus`);
-    this.setText(this.tr, `Campers: ${d.names.join(', ')} · ${d.fps} fps`);
+    const dusk = Math.max(0, Math.min(120, Math.round(d.time)));
+    this.setText(this.objective, `${d.night ? 'NIGHT' : `SUNSET ${dusk}s`} · campers rescued ${d.rescued}/${d.camperNeed} · return to the bus`);
+    this.setText(this.tr, `Counselors: ${d.names.join(', ')} · ${d.fps} fps`);
     this.bar.style.width = `${d.stamina}%`;
     this.setText(this.heldText, `Holding: ${d.held || 'nothing'}  `);
     this.setText(this.glowText, ` ${d.glow}`);
@@ -47,8 +52,8 @@ export class Hud {
     if (this.result) return;
     document.exitPointerLock?.();
     this.result = h('div', { cls: 'result', id: 'hud-result' },
-      h('h1', {}, kind === 'win' ? 'EXTRACTED!' : 'CAUGHT!'),
-      h('p', {}, kind === 'win' ? 'The bus pulls away. Nobody mentions the lake.' : 'Something heard you...'),
+      h('h1', {}, kind === 'win' ? 'CAMPERS SAFE!' : 'CAUGHT!'),
+      h('p', {}, kind === 'win' ? 'Everyone piles onto the bus as the camp disappears into the dark.' : 'Something heard you...'),
       h('button', { id: 'btn-menu', onclick: () => { location.href = location.pathname; } }, 'Back to the registration desk'));
     this.root.append(this.result);
   }
