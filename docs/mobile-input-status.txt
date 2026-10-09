@@ -1,0 +1,1 @@
+iPad input hardening pass: pointer + touch fallback, Magic Keyboard trackpad drag/click support, always-on touch UI for touch-capable iPads, movement/look/use verification checklist.
