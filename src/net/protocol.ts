@@ -1,9 +1,9 @@
 export const TICK_HZ = 20;
 export const TICK_MS = 1000 / TICK_HZ;
 export const MIN_CAP = 4;
-export const MAX_CAP = 8;
+export const MAX_CAP = 15;
 export type RejectReason = 'full' | 'started' | 'version';
-export const PROTOCOL = 1;
+export const PROTOCOL = 2;
 
 export interface PlayerInfo { id: number; name: string; ready: boolean; peer: string }
 export type Vec3 = [number, number, number];
@@ -32,6 +32,6 @@ export type Msg =
   | { t: 'start'; seed: number; need: number }
   | { t: 'bye' }
   | { t: 'p'; s: PlayerState }
-  | { t: 'act'; a: 'pick' | 'drop' | 'throw' | 'snap' | 'night'; color?: string }
+  | { t: 'act'; a: 'pick' | 'drop' | 'throw' | 'snap' | 'night'; color?: string; force?: number }
   | { t: 'spawn'; def: ItemDef }
   | GameSnap;
