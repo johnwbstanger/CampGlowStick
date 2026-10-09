@@ -50,6 +50,41 @@ function decal(host: THREE.Object3D, local: THREE.Box3, side: number, text: stri
   return m;
 }
 
+function makeRoadOverlay(layout: Layout): THREE.Group {
+  const group = new THREE.Group();
+  const roadMat = new THREE.MeshStandardMaterial({ color: '#A85F30', roughness: 1, metalness: 0, depthWrite: true });
+  const clearingMat = new THREE.MeshStandardMaterial({ color: '#5F7138', roughness: 1, metalness: 0 });
+
+  for (const c of layout.clearings) {
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 48), clearingMat);
+    disc.rotation.x = -Math.PI / 2;
+    disc.scale.set(c.rx, c.rz, 1);
+    disc.position.set(c.x, 0.012, c.z);
+    disc.receiveShadow = true;
+    group.add(disc);
+  }
+
+  for (const road of layout.roads) {
+    for (let i = 1; i < road.points.length; i++) {
+      const [ax, az] = road.points[i - 1], [bx, bz] = road.points[i];
+      const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz);
+      const seg = new THREE.Mesh(new THREE.PlaneGeometry(road.width, len), roadMat);
+      seg.rotation.x = -Math.PI / 2;
+      seg.rotation.z = -Math.atan2(dz, dx) + Math.PI / 2;
+      seg.position.set((ax + bx) / 2, 0.025, (az + bz) / 2);
+      seg.receiveShadow = true;
+      group.add(seg);
+    }
+    for (const [x, z] of road.points) {
+      const joint = new THREE.Mesh(new THREE.CircleGeometry(road.width / 2, 24), roadMat);
+      joint.rotation.x = -Math.PI / 2;
+      joint.position.set(x, 0.026, z);
+      group.add(joint);
+    }
+  }
+  return group;
+}
+
 export function buildWorld(layout: Layout): World {
   const group = new THREE.Group();
   const colliders: Box[] = [];
@@ -59,7 +94,7 @@ export function buildWorld(layout: Layout): World {
   for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) spots.push({ x: -WORLD_HALF + i * tile, z: -WORLD_HALF + j * tile, rot: 0 });
   const ground = instance('ground', spots);
   ground.traverse((o) => { (o as THREE.Mesh).castShadow = false; });
-  group.add(ground);
+  group.add(ground, makeRoadOverlay(layout));
 
   const hosts: THREE.Object3D[] = [], hostBoxes: THREE.Box3[] = [];
   const place = (p: Placed) => {
@@ -76,10 +111,9 @@ export function buildWorld(layout: Layout): World {
   group.add(instance('tree3', layout.trees.filter((t) => t.name === 'tree3')));
   for (const t of layout.trees) colliders.push({ minX: t.x - 0.35, maxX: t.x + 0.35, minZ: t.z - 0.35, maxZ: t.z + 0.35, minY: 0, maxY: 6 });
 
-  // decals are attached to cabins (statics 1..4) and the shed (static 5)
   for (const d of layout.decals) {
-    const idx = d.host < 4 ? 1 + d.host : 5;
-    decal(hosts[idx], hostBoxes[idx], d.side, d.text, d.creepy);
+    const host = hosts[d.host], box = hostBoxes[d.host];
+    if (host && box) decal(host, box, d.side, d.text, d.creepy);
   }
 
   const tex = document.createElement('canvas');
@@ -89,7 +123,7 @@ export function buildWorld(layout: Layout): World {
   x.globalAlpha = 1; x.strokeStyle = '#FFFDD0'; x.lineWidth = 6; x.strokeRect(6, 6, 244, 116);
   x.fillStyle = '#1A3A2B'; x.font = 'bold 40px "Courier New"'; x.textAlign = 'center'; x.fillText('EXTRACT', 128, 78);
   const mark = new THREE.Mesh(new THREE.PlaneGeometry(layout.extraction.r * 2, layout.extraction.r), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(tex), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
-  mark.rotation.x = -Math.PI / 2; mark.position.set(layout.extraction.x, 0.03, layout.extraction.z);
+  mark.rotation.x = -Math.PI / 2; mark.position.set(layout.extraction.x, 0.04, layout.extraction.z);
   group.add(mark);
 
   for (const s of layout.items) if (!sizes.has(s.model)) sizes.set(s.model, sizeOf(s.model));

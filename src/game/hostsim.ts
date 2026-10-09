@@ -29,7 +29,7 @@ export class HostSim {
   private nextId = 1;
   private fresh: Noise[] = [];
 
-  constructor(private net: Session, private layout: Layout, colliders: Box[], private sizes: Sizes, defs: ItemDef[], spawnById: Map<number, [number, number]>) {
+  constructor(private net: Session, private layout: Layout, private colliders: Box[], private sizes: Sizes, defs: ItemDef[], spawnById: Map<number, [number, number]>) {
     this.monster = newMonster(layout.monsterStart[0], layout.monsterStart[1]);
     this.world.broadphase = new CANNON.SAPBroadphase(this.world);
     this.world.allowSleep = true;
@@ -48,7 +48,6 @@ export class HostSim {
     for (const p of net.players) this.addPlayer(p.id, layout.spawns[p.id % layout.spawns.length]);
   }
 
-  /** Initial item definitions + where they spawn; call before constructing the sim. */
   static makeDefs(layout: Layout): { defs: ItemDef[]; spawnById: Map<number, [number, number]> } {
     const spawnById = new Map<number, [number, number]>();
     const defs = layout.items.map((s, i) => { spawnById.set(i + 1, [s.x, s.z]); return { id: i + 1, model: s.model, kind: s.kind, mat: propInfo(s.model).mat } satisfies ItemDef; });
@@ -171,7 +170,7 @@ export class HostSim {
     }
     if (!this.over) {
       const prey = [...this.players.entries()].map(([id, p]) => ({ id, x: p.state.p[0], z: p.state.p[2], crouch: p.state.crouch, alive: p.alive }));
-      const caught = stepMonster(this.monster, dt, this.time, this.bus, prey, this.night);
+      const caught = stepMonster(this.monster, dt, this.time, this.bus, prey, this.night, Math.random, this.colliders);
       if (caught !== null) { const p = this.players.get(caught); if (p) p.alive = false; this.over = 'lose'; }
       else if (this.collected >= this.layout.need && [...this.players.values()].some((p) => p.alive && Math.hypot(p.state.p[0] - ex.x, p.state.p[2] - ex.z) < ex.r)) this.over = 'win';
     }
@@ -190,7 +189,6 @@ export class HostSim {
     return { t: 's', time: r2(this.time), night: this.night, players, items, monster: { p: [r2(m.x), 0, r2(m.z)], yaw: r2(m.yaw), mode: m.mode }, noise, collected: this.collected, need: this.layout.need, over: this.over };
   }
 
-  /** Called by the game loop at ~20 Hz. */
   tick(dt: number): void {
     this.step(dt);
     this.net.broadcast(this.snapshot());
