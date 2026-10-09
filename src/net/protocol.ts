@@ -32,6 +32,6 @@ export type Msg =
   | { t: 'start'; seed: number; need: number }
   | { t: 'bye' }
   | { t: 'p'; s: PlayerState }
-  | { t: 'act'; a: 'pick' | 'drop' | 'throw' | 'snap' | 'night'; color?: string; force?: number }
+  | { t: 'act'; a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire'; color?: string; force?: number }
   | { t: 'spawn'; def: ItemDef }
   | GameSnap;
