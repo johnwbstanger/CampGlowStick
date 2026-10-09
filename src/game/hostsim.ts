@@ -39,6 +39,7 @@ export class HostSim {
   over: '' | 'win' | 'lose' = '';
   private nextId = 1;
   private fresh: Noise[] = [];
+  private monsterStunnedUntil = 0;
 
   constructor(private net: Session, private layout: Layout, private colliders: Box[], private sizes: Sizes, defs: ItemDef[], spawnById: Map<number, [number, number]>) {
     this.monster = newMonster(layout.monsterStart[0], layout.monsterStart[1]);
@@ -54,8 +55,9 @@ export class HostSim {
     }
     for (const d of defs) {
       const at = spawnById.get(d.id) ?? [0, 0];
-      const sz = d.kind === 'glow' ? { x: 0.04, y: 0.04, z: 0.2 } : (this.sizes.get(d.model) ?? { x: 0.3, y: 0.3, z: 0.3 });
-      this.addItem(d, at[0], terrainHeight(at[0], at[1], layout) + Math.max(0.03, sz.y / 2) + 0.03, at[1]);
+      const sz = d.model === 'directorGun' ? { x: .65, y: .22, z: .2 } : d.kind === 'glow' ? { x: 0.04, y: 0.04, z: 0.2 } : (this.sizes.get(d.model) ?? { x: 0.3, y: 0.3, z: 0.3 });
+      const extra = d.model === 'directorGun' ? .82 : 0;
+      this.addItem(d, at[0], terrainHeight(at[0], at[1], layout) + Math.max(0.03, sz.y / 2) + 0.03 + extra, at[1]);
       this.nextId = Math.max(this.nextId, d.id + 1);
     }
     for (let i = 0; i < CAMPER_NEED; i++) {
@@ -69,6 +71,10 @@ export class HostSim {
   static makeDefs(layout: Layout): { defs: ItemDef[]; spawnById: Map<number, [number, number]> } {
     const spawnById = new Map<number, [number, number]>();
     const defs = layout.items.map((s, i) => { spawnById.set(i + 1, [s.x, s.z]); return { id: i + 1, model: s.model, kind: s.kind, mat: propInfo(s.model).mat } satisfies ItemDef; });
+    const gunId = defs.length + 1;
+    defs.push({ id: gunId, model: 'directorGun', kind: 'prop', mat: 'metal' });
+    // On the director's desk, not randomly somewhere in the map.
+    spawnById.set(gunId, [-27, 3.35]);
     return { defs, spawnById };
   }
 
@@ -78,7 +84,7 @@ export class HostSim {
 
   private addItem(def: ItemDef, x: number, y: number, z: number): SimItem {
     const mass = def.kind === 'glow' ? GLOW_MASS : propInfo(def.model).mass;
-    const sz = def.kind === 'glow' ? { x: 0.04, y: 0.04, z: 0.2 } : (this.sizes.get(def.model) ?? { x: 0.3, y: 0.3, z: 0.3 });
+    const sz = def.model === 'directorGun' ? { x: .65, y: .22, z: .2 } : def.kind === 'glow' ? { x: 0.04, y: 0.04, z: 0.2 } : (this.sizes.get(def.model) ?? { x: 0.3, y: 0.3, z: 0.3 });
     const halfY = Math.max(0.02, sz.y / 2);
     const body = new CANNON.Body({ mass, shape: new CANNON.Box(new CANNON.Vec3(Math.max(0.02, sz.x / 2), halfY, Math.max(0.02, sz.z / 2))), linearDamping: 0.13, angularDamping: 0.38, sleepSpeedLimit: 0.18, sleepTimeLimit: 0.45 });
     body.position.set(x, y, z);
@@ -118,9 +124,25 @@ export class HostSim {
     } else if (msg.a === 'drop') this.release(from, false);
     else if (msg.a === 'throw') this.release(from, true, msg.force ?? 0.35);
     else if (msg.a === 'snap') this.snap(from, pl, msg.color ?? 'green');
+    else if (msg.a === 'fire') this.fire(from, pl);
   }
 
   private forward(pl: SimPlayer): [number, number] { return [-Math.sin(pl.state.yaw), -Math.cos(pl.state.yaw)]; }
+
+  private fire(id: number, pl: SimPlayer): void {
+    const it = pl.state.held >= 0 ? this.items.get(pl.state.held) : undefined;
+    if (!it || it.def.model !== 'directorGun') return;
+    const [fx, fz] = this.forward(pl), px = pl.state.p[0], pz = pl.state.p[2];
+    this.noise(px, pz, VOLUME.crash, 'metal', 'impact');
+    const dx = this.monster.x - px, dz = this.monster.z - pz;
+    const along = dx * fx + dz * fz;
+    const perp = Math.abs(dx * fz - dz * fx);
+    if (along > 0 && along < 34 && perp < 1.25) {
+      this.monsterStunnedUntil = Math.max(this.monsterStunnedUntil, this.time + 10);
+      this.monster.x += fx * 2.6; this.monster.z += fz * 2.6;
+      this.monster.mode = 'idle'; this.monster.timer = 0;
+    }
+  }
 
   private findCamper(id: number, pl: SimPlayer): boolean {
     const [px, , pz] = pl.state.p, [fx, fz] = this.forward(pl);
@@ -165,7 +187,6 @@ export class HostSim {
   }
 
   private snap(id: number, pl: SimPlayer, color: string): void {
-    // Unlimited supply: snapping is never blocked by a per-session inventory cap.
     const def: ItemDef = { id: this.nextId++, model: 'glowstick', kind: 'glow', color, mat: 'glow' };
     const [fx, fz] = this.forward(pl); const it = this.addItem(def, pl.state.p[0] + fx * 0.6, pl.state.p[1] + 1.2, pl.state.p[2] + fz * 0.6);
     this.net.broadcast({ t: 'spawn', def }); this.noise(pl.state.p[0], pl.state.p[2], 1, 'glow', 'glow'); if (pl.state.held < 0) this.hold(id, pl, it);
@@ -228,7 +249,8 @@ export class HostSim {
 
     if (!this.over) {
       const prey = [...this.players.entries()].map(([id, p]) => ({ id, x: p.state.p[0], z: p.state.p[2], crouch: p.state.crouch, alive: p.alive && !this.inBusZone(p.state.p[0], p.state.p[2]) }));
-      const caught = stepMonster(this.monster, dt, this.time, this.bus, prey, this.night, Math.random, this.colliders);
+      const monsterActive = this.night && this.time >= this.monsterStunnedUntil;
+      const caught = stepMonster(this.monster, dt, this.time, this.bus, prey, monsterActive, Math.random, this.colliders);
       if (caught !== null) { const p = this.players.get(caught); if (p && !this.inBusZone(p.state.p[0], p.state.p[2])) p.alive = false; if (p && !p.alive) this.over = 'lose'; }
       if (!this.over && this.rescued >= CAMPER_NEED && [...this.players.values()].some((p) => p.alive && this.inBusZone(p.state.p[0], p.state.p[2]))) this.over = 'win';
     }
@@ -240,7 +262,8 @@ export class HostSim {
     const players: GameSnap['players'] = {}; for (const [id, p] of this.players) players[id] = { ...p.state, alive: p.alive };
     const campers: CamperSnap[] = [...this.campers.values()].map((c) => ({ id: c.id, x: r2(c.x), y: r2(c.y), z: r2(c.z), foundBy: c.foundBy, rescued: c.rescued }));
     const noise = this.fresh; this.fresh = []; const m = this.monster;
-    return { t: 's', time: r2(this.time), night: this.night, players, items, campers, rescued: this.rescued, camperNeed: CAMPER_NEED, monster: { p: [r2(m.x), 0, r2(m.z)], yaw: r2(m.yaw), mode: m.mode }, noise, collected: this.collected, need: this.layout.need, over: this.over };
+    const mode = this.time < this.monsterStunnedUntil ? 'stunned' : m.mode;
+    return { t: 's', time: r2(this.time), night: this.night, players, items, campers, rescued: this.rescued, camperNeed: CAMPER_NEED, monster: { p: [r2(m.x), 0, r2(m.z)], yaw: r2(m.yaw), mode }, noise, collected: this.collected, need: this.layout.need, over: this.over };
   }
 
   tick(dt: number): void { this.step(dt); this.net.broadcast(this.snapshot()); }
