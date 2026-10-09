@@ -1,7 +1,10 @@
 import { GLOW_COLORS } from '../game/constants';
 import { h } from './dom';
 
-export interface HudData { stamina: number; held: string; glow: string; night: boolean; time: number; collected: number; need: number; names: string[]; fps: number }
+export interface HudData {
+  stamina: number; held: string; glow: string; night: boolean; time: number;
+  collected: number; need: number; rescued: number; camperNeed: number; names: string[]; fps: number;
+}
 
 export class Hud {
   root = h('div', { id: 'hud' });
@@ -30,7 +33,7 @@ export class Hud {
 
   update(d: HudData): void {
     const dusk = Math.max(0, Math.min(120, Math.round(d.time)));
-    this.setText(this.objective, `${d.night ? 'NIGHT' : `SUNSET ${dusk}s`} · supplies ${d.collected}/${d.need} → bus safe zone`);
+    this.setText(this.objective, `${d.night ? 'NIGHT' : `SUNSET ${dusk}s`} · campers rescued ${d.rescued}/${d.camperNeed} · return to the bus`);
     this.setText(this.tr, `Counselors: ${d.names.join(', ')} · ${d.fps} fps`);
     this.bar.style.width = `${d.stamina}%`;
     this.setText(this.heldText, `Holding: ${d.held || 'nothing'}  `);
@@ -49,8 +52,8 @@ export class Hud {
     if (this.result) return;
     document.exitPointerLock?.();
     this.result = h('div', { cls: 'result', id: 'hud-result' },
-      h('h1', {}, kind === 'win' ? 'EXTRACTED!' : 'CAUGHT!'),
-      h('p', {}, kind === 'win' ? 'The bus pulls away. Nobody mentions the lake.' : 'Something heard you...'),
+      h('h1', {}, kind === 'win' ? 'CAMPERS SAFE!' : 'CAUGHT!'),
+      h('p', {}, kind === 'win' ? 'Everyone piles onto the bus as the camp disappears into the dark.' : 'Something heard you...'),
       h('button', { id: 'btn-menu', onclick: () => { location.href = location.pathname; } }, 'Back to the registration desk'));
     this.root.append(this.result);
   }
