@@ -6,6 +6,7 @@ import { MONSTER, newMonster, stepMonster } from '../../src/game/monster';
 import { resolveCapsule } from '../../src/game/colliders';
 import { lerpAngle } from '../../src/game/interp';
 import { buildLayout } from '../../src/game/layout';
+import { findRoute, navLineClear } from '../../src/game/navigation';
 
 describe('stamina', () => {
   it('drain = base * (1 + carry / cap)', () => {
@@ -46,7 +47,6 @@ describe('noise + monster', () => {
   it('redirects search toward a thrown object impact when no player is visible', () => {
     const bus = new NoiseBus(), m = newMonster(0, 0);
     m.mode = 'search'; m.tx = 0; m.tz = 4; m.timer = 3;
-    // Ordinary footsteps are louder at the source, but the deliberate thrown impact is the intended decoy.
     bus.emit({ x: 1, z: 1, vol: 5, mat: 'step', t: 0, source: 'step' });
     bus.emit({ x: 9, z: -2, vol: 6, mat: 'can', t: 0, source: 'thrown-impact' });
     stepMonster(m, 0.1, 0.1, bus, [{ id: 1, x: 30, z: 30, crouch: false, alive: true }], true);
@@ -61,6 +61,17 @@ describe('noise + monster', () => {
     stepMonster(m, 0.1, 0.1, bus, [{ id: 2, x: 0, z: 4, crouch: false, alive: true }], true);
     expect(m.mode).toBe('chase');
     expect(m.tz).toBe(4);
+  });
+});
+
+describe('navigation', () => {
+  it('routes around a solid building instead of crossing through it', () => {
+    const wall = [{ minX: -2, maxX: 2, minZ: -3, maxZ: 3, minY: 0, maxY: 3 }];
+    expect(navLineClear({ x: -8, z: 0 }, { x: 8, z: 0 }, wall, .45)).toBe(false);
+    const route = findRoute({ x: -8, z: 0 }, { x: 8, z: 0 }, wall, .45, 2);
+    expect(route.length).toBeGreaterThan(1);
+    expect(route.some((p) => Math.abs(p.z) > 3.2)).toBe(true);
+    expect(route.at(-1)?.x).toBe(8);
   });
 });
 
