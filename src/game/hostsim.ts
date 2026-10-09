@@ -1,8 +1,8 @@
 import * as CANNON from 'cannon-es';
 import type { Session } from '../net/session';
 import type { CamperSnap, GameSnap, ItemDef, ItemSnap, Msg, PlayerState } from '../net/protocol';
-import type { Box } from './colliders';
-import { DAY_SECONDS, PLAYER, REACH } from './constants';
+import { resolveCapsule, type Box } from './colliders';
+import { DAY_SECONDS, PLAYER, REACH, WORLD_HALF } from './constants';
 import { GLOW_MASS, propInfo } from './items';
 import type { Layout } from './layout';
 import { newMonster, stepMonster } from './monster';
@@ -19,6 +19,9 @@ const CAMPER_NEED = 7;
 const CAMPER_HIDES: [number, number][] = [
   [-78, -43], [-42, -58], [19, -55], [65, -39], [-67, 21], [-20, 32], [42, 28],
   [82, 7], [-8, 58], [-88, 76], [97, 59], [-101, -39], [78, -7], [-45, 88],
+];
+const BUS_SEATS: [number, number][] = [
+  [-2.7, .72], [-2.7, -.55], [-1.3, .72], [-1.3, -.55], [.2, .72], [.2, -.55], [1.65, .72],
 ];
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -87,8 +90,6 @@ export class HostSim {
       it.lastHit = this.time;
       const recentlyThrown = this.time - it.thrownAt < 3;
       const source: NoiseSource = recentlyThrown ? 'thrown-impact' : 'impact';
-      // A deliberately thrown object should be a useful distraction. Its landing/crash is louder
-      // than incidental clutter movement, and the sound originates where the object actually hits.
       const vol = impactVolume(v, mass) * (recentlyThrown ? 1.35 : 1);
       this.noise(body.position.x, body.position.z, Math.min(VOLUME.crash, vol), def.mat, source);
     });
@@ -160,8 +161,6 @@ export class HostSim {
     if (thrown) {
       it.thrownAt = this.time;
       it.body.angularVelocity.set(Math.random() * 6 - 3, Math.random() * 6 - 3, Math.random() * 6 - 3);
-      // Small hand-release sound can be heard nearby, but the monster's distraction priority is
-      // reserved for the actual thrown-impact event at the landing point.
       this.noise(pl.state.p[0], pl.state.p[2], VOLUME.throw * 0.35, 'step', 'step');
     }
   }
@@ -173,6 +172,13 @@ export class HostSim {
     this.net.broadcast({ t: 'spawn', def }); this.noise(pl.state.p[0], pl.state.p[2], 1, 'glow', 'glow'); if (pl.state.held < 0) this.hold(id, pl, it);
   }
 
+  private seatCamper(c: SimCamper): void {
+    const ex = this.layout.extraction, seat = BUS_SEATS[Math.min(this.rescued, BUS_SEATS.length - 1)];
+    c.x = ex.x + seat[0]; c.z = ex.z + seat[1]; c.y = terrainHeight(c.x, c.z, this.layout) + 0.18;
+    c.rescued = true; c.foundBy = -1; this.rescued++;
+    this.noise(c.x, c.z, 0.7, 'step', 'interaction');
+  }
+
   private stepCampers(dt: number): void {
     for (const c of this.campers.values()) {
       if (c.rescued || c.foundBy < 0) continue;
@@ -181,9 +187,15 @@ export class HostSim {
       const [fx, fz] = this.forward(pl);
       const tx = pl.state.p[0] - fx * 1.45, tz = pl.state.p[2] - fz * 1.45;
       const dx = tx - c.x, dz = tz - c.z, d = Math.hypot(dx, dz);
-      if (d > 0.15) { const s = Math.min(d, 4.2 * dt); c.x += dx / d * s; c.z += dz / d * s; }
+      if (d > 0.15) {
+        const s = Math.min(d, 4.2 * dt);
+        const tryPos = { x: c.x + dx / d * s, y: terrainHeight(c.x, c.z, this.layout), z: c.z + dz / d * s };
+        // Child-sized obstacle resolution stops rescued campers walking straight through cabin walls.
+        resolveCapsule(tryPos, 0.24, 1.15, this.colliders, WORLD_HALF);
+        c.x = tryPos.x; c.z = tryPos.z;
+      }
       c.y = terrainHeight(c.x, c.z, this.layout);
-      if (this.inBusZone(c.x, c.z)) { c.rescued = true; c.foundBy = -1; this.rescued++; this.noise(c.x, c.z, 0.7, 'step', 'interaction'); }
+      if (this.inBusZone(c.x, c.z)) this.seatCamper(c);
     }
   }
 

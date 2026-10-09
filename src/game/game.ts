@@ -6,9 +6,11 @@ import type { Voice } from '../audio/voice';
 import type { GameSnap, ItemDef, Msg } from '../net/protocol';
 import { TICK_MS } from '../net/protocol';
 import type { Session } from '../net/session';
+import { CampMap } from '../ui/campMap';
 import { Hud } from '../ui/hud';
 import { Actor, RemotePlayer } from './avatars';
 import { CamperActor } from './campers';
+import { camperFoundLine, camperName } from './camperDialogue';
 import { GLOW_NAMES, REACH } from './constants';
 import { makeGlowstick, makeLootHalo } from './glow';
 import { HostSim } from './hostsim';
@@ -23,7 +25,7 @@ import { buildWorld, type World } from './world';
 
 type StartMsg = Extract<Msg, { t: 'start' }>;
 interface ItemView { def: ItemDef; obj: THREE.Object3D; target: THREE.Vector3; q: THREE.Quaternion; init: boolean }
-interface CamperView { actor: CamperActor; target: THREE.Vector3; lastTarget: THREE.Vector3; rescued: boolean }
+interface CamperView { actor: CamperActor; target: THREE.Vector3; lastTarget: THREE.Vector3; rescued: boolean; foundBy: number }
 
 declare global { interface Window { __cg?: Record<string, unknown> } }
 
@@ -42,6 +44,7 @@ export class Game {
   world: World;
   local: LocalPlayer;
   hud = new Hud();
+  campMap: CampMap;
   remotes = new Map<number, RemotePlayer>();
   items = new Map<number, ItemView>();
   campers = new Map<number, CamperView>();
@@ -78,6 +81,7 @@ export class Game {
     this.world = buildWorld(layout);
     this.scene.add(this.world.group);
     this.local = new LocalPlayer(this.camera, this.renderer.domElement, layout);
+    this.campMap = new CampMap(layout);
     const sp = layout.spawns[net.myId % layout.spawns.length];
     this.local.teleport(sp[0], sp[1]);
     for (const p of net.players) if (p.id !== net.myId) this.remotes.set(p.id, new RemotePlayer(p.id, p.name, this.scene));
@@ -91,7 +95,7 @@ export class Game {
     const made = HostSim.makeDefs(layout);
     for (const d of made.defs) this.addItemView(d);
 
-    root.replaceChildren(this.renderer.domElement, this.hud.root);
+    root.replaceChildren(this.renderer.domElement, this.hud.root, this.campMap.root);
     this.resize();
     addEventListener('resize', this.resize);
     this.renderer.domElement.addEventListener('pointerdown', this.pointerDown);
@@ -112,24 +116,30 @@ export class Game {
 
   private hasHeldItem(): boolean { return (this.snap?.players[this.net.myId]?.held ?? -1) >= 0; }
   private interact = (quickThrow = true): void => {
-    if (this.snap?.over) return;
+    if (this.snap?.over || this.campMap.open) return;
     if (this.hasHeldItem()) this.act('throw', quickThrow ? 0.28 : 0.5);
     else this.act('pick');
   };
 
   private pointerDown = (e: PointerEvent): void => {
-    if (e.button !== 0 || this.snap?.over) return;
+    if (e.button !== 0 || this.snap?.over || this.campMap.open) return;
     if (document.pointerLockElement !== this.renderer.domElement) { void this.renderer.domElement.requestPointerLock?.(); return; }
     if (this.hasHeldItem()) this.mouseDownAt = performance.now(); else this.interact();
   };
   private pointerUp = (e: PointerEvent): void => {
-    if (e.button !== 0 || !this.mouseDownAt || this.snap?.over) return;
+    if (e.button !== 0 || !this.mouseDownAt || this.snap?.over || this.campMap.open) return;
     const heldMs = performance.now() - this.mouseDownAt; this.mouseDownAt = 0;
     this.act('throw', THREE.MathUtils.clamp((heldMs - 60) / 900, 0.2, 1));
   };
 
   private key = (e: KeyboardEvent): void => {
     if (e.repeat || this.snap?.over) return;
+    if (e.code === 'KeyM') {
+      const open = this.campMap.toggle();
+      if (open) document.exitPointerLock?.();
+      return;
+    }
+    if (this.campMap.open) return;
     if (e.code === 'KeyE') this.interact();
     else if (e.code === 'KeyR') this.act('drop');
     else if (e.code === 'KeyG') this.act('snap');
@@ -176,10 +186,12 @@ export class Game {
       let v = this.campers.get(c.id);
       if (!v) {
         const actor = new CamperActor(c.id); actor.root.position.set(c.x, c.y, c.z); this.scene.add(actor.root);
-        v = { actor, target: new THREE.Vector3(c.x, c.y, c.z), lastTarget: new THREE.Vector3(c.x, c.y, c.z), rescued: c.rescued };
+        v = { actor, target: new THREE.Vector3(c.x, c.y, c.z), lastTarget: new THREE.Vector3(c.x, c.y, c.z), rescued: c.rescued, foundBy: c.foundBy };
         this.campers.set(c.id, v);
+      } else if (v.foundBy < 0 && c.foundBy === this.net.myId) {
+        this.hud.toast(`${camperName(c.id)}: “${camperFoundLine(c.id)}”`);
       }
-      v.lastTarget.copy(v.target); v.target.set(c.x, c.y, c.z); v.rescued = c.rescued;
+      v.lastTarget.copy(v.target); v.target.set(c.x, c.y, c.z); v.rescued = c.rescued; v.foundBy = c.foundBy;
     }
 
     const m = s.monster;
@@ -188,13 +200,38 @@ export class Game {
     if (m.mode === 'chase' && this.monsterMode !== 'chase') growl();
     this.monsterMode = m.mode;
     for (const n of s.noise) { const d = Math.hypot(n.x - this.local.pos.x, n.z - this.local.pos.z); playMaterial(n.mat, falloff(n.vol, d) * 2); }
-    if (s.over && !this.overShown) { this.overShown = true; this.hud.showResult(s.over); }
+    if (s.over && !this.overShown) { this.overShown = true; this.campMap.hide(); this.hud.showResult(s.over); }
   }
 
   private held(): { name: string; mass: number } {
     const id = this.snap?.players[this.net.myId]?.held ?? -1; const it = this.items.get(id);
     if (!it) return { name: '', mass: 0 };
     return { name: it.def.kind === 'glow' ? `${it.def.color} glowstick` : it.def.model, mass: it.def.kind === 'glow' ? 0.1 : propInfo(it.def.model).mass };
+  }
+
+  private facingScore(x: number, z: number): { d: number; facing: number } {
+    const dx = x - this.local.pos.x, dz = z - this.local.pos.z, d = Math.hypot(dx, dz);
+    const fx = -Math.sin(this.local.yaw), fz = -Math.cos(this.local.yaw);
+    return { d, facing: d > 0 ? (dx * fx + dz * fz) / d : 1 };
+  }
+
+  private contextPrompt(heldName: string): string {
+    if (this.campMap.open) return '';
+    if (heldName) return `Holding ${heldName} · release click to throw · R to place`;
+    const ex = this.layout.extraction;
+    if (Math.hypot(this.local.pos.x - ex.x, this.local.pos.z - ex.z) < ex.r + 2) return 'BUS SAFE ZONE · board through the side door';
+
+    let best = REACH + .7, text = '';
+    for (const c of this.snap?.campers ?? []) {
+      if (c.rescued || c.foundBy >= 0) continue;
+      const f = this.facingScore(c.x, c.z);
+      if (f.d < best && (f.d < 1.1 || f.facing > .4)) { best = f.d; text = `Click / E — find ${camperName(c.id)}`; }
+    }
+    for (const v of this.items.values()) {
+      const f = this.facingScore(v.target.x, v.target.z);
+      if (f.d < best && (f.d < 1 || f.facing > .48)) { best = f.d; text = `Click / E — pick up ${v.def.kind === 'glow' ? 'glowstick' : v.def.model}`; }
+    }
+    return text;
   }
 
   private netTick(): void {
@@ -221,7 +258,8 @@ export class Game {
       this.monster.play(this.monsterMode === 'idle' ? 'idle' : this.monsterMode === 'chase' ? 'sprint' : 'walk'); this.monster.update(dt);
     }
     this.voice?.update({ x: this.local.pos.x, y: this.local.pos.y + 1.6, z: this.local.pos.z, yaw: this.local.yaw }, (id) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, y: r.pos.y + 1.6, z: r.pos.z } : undefined; });
-    this.hud.update({ stamina: this.local.stamina, held: held.name, glow: this.glow, night: this.snap?.night ?? false, time: this.snap?.time ?? 0, collected: this.snap?.collected ?? 0, need: this.layout.need, rescued: this.snap?.rescued ?? 0, camperNeed: this.snap?.camperNeed ?? 7, names: this.net.players.map((p) => p.name), fps: this.fps });
+    this.campMap.update(this.local.pos.x, this.local.pos.z, this.local.yaw);
+    this.hud.update({ stamina: this.local.stamina, held: held.name, glow: this.glow, night: this.snap?.night ?? false, time: this.snap?.time ?? 0, collected: this.snap?.collected ?? 0, need: this.layout.need, rescued: this.snap?.rescued ?? 0, camperNeed: this.snap?.camperNeed ?? 7, names: this.net.players.map((p) => p.name), fps: this.fps, prompt: this.contextPrompt(held.name) });
     this.renderer.render(this.scene, this.camera);
   }
 

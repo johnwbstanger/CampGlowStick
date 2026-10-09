@@ -4,6 +4,7 @@ import { h } from './dom';
 export interface HudData {
   stamina: number; held: string; glow: string; night: boolean; time: number;
   collected: number; need: number; rescued: number; camperNeed: number; names: string[]; fps: number;
+  prompt?: string;
 }
 
 export class Hud {
@@ -17,6 +18,7 @@ export class Hud {
   private glowText = h('span', {});
   private info = h('div', { id: 'hud-held' }, this.heldText, this.swatch, this.glowText);
   private toastEl = h('div', { cls: 'toast', id: 'hud-toast' });
+  private promptEl = h('div', { cls: 'prompt hidden', id: 'hud-prompt' });
   private result?: HTMLElement;
   private toastTimer = 0;
 
@@ -24,8 +26,8 @@ export class Hud {
     this.tl.append(this.objective,
       h('div', {}, 'WASD move · Shift sprint · Tap Space jump · Hold Space crouch'),
       h('div', {}, 'Click / E interact · Hold click then release to throw · R place/drop · F flashlight'),
-      h('div', {}, 'G snap glowstick · 1-5 colour · N day/night (host debug)'));
-    this.root.append(this.tl, this.tr, h('div', { cls: 'cross' }), this.toastEl,
+      h('div', {}, 'M map · G snap glowstick · 1-5 colour · N day/night (host debug)'));
+    this.root.append(this.tl, this.tr, h('div', { cls: 'cross' }), this.promptEl, this.toastEl,
       h('div', { cls: 'bl' }, this.info, h('div', { cls: 'stam' }, this.bar)));
   }
 
@@ -40,12 +42,15 @@ export class Hud {
     this.setText(this.glowText, ` ${d.glow}`);
     const bg = `background:${GLOW_COLORS[d.glow]}`;
     if (this.swatch.getAttribute('style') !== bg) this.swatch.setAttribute('style', bg);
+    const prompt = d.prompt ?? '';
+    this.setText(this.promptEl, prompt);
+    this.promptEl.classList.toggle('hidden', !prompt);
   }
 
   toast(text: string): void {
     this.toastEl.textContent = text;
     clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => { this.toastEl.textContent = ''; }, 2500);
+    this.toastTimer = window.setTimeout(() => { this.toastEl.textContent = ''; }, 3000);
   }
 
   showResult(kind: 'win' | 'lose'): void {

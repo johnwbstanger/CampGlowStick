@@ -48,13 +48,26 @@ ul.players li { display: flex; justify-content: space-between; padding: 8px 10px
 .bar > i { display: block; height: 100%; width: 0; background: var(--orange); }
 #hud { position: absolute; inset: 0; pointer-events: none; font-weight: bold; text-shadow: 2px 2px 0 rgba(26,58,43,.85); }
 #hud .tl { position: absolute; top: 12px; left: 14px; font-size: 15px; line-height: 1.5; background: rgba(26,58,43,.72); padding: 8px 12px; border-radius: 8px; border: 2px solid var(--tan); }
-#hud .bl { position: absolute; bottom: 14px; left: 14px; width: 220px; }
+#hud .bl { position: absolute; bottom: 14px; left: 14px; width: 260px; }
 #hud .tr { position: absolute; top: 12px; right: 14px; text-align: right; font-size: 13px; background: rgba(26,58,43,.72); padding: 8px 12px; border-radius: 8px; border: 2px solid var(--tan); }
 #hud .stam { height: 12px; border: 2px solid var(--tan); border-radius: 6px; background: rgba(26,58,43,.8); overflow: hidden; }
 #hud .stam > i { display: block; height: 100%; background: var(--mustard); width: 100%; }
 #hud .cross { position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: var(--cream); opacity: .8; }
-#hud .toast { position: absolute; bottom: 90px; width: 100%; text-align: center; font-size: 18px; }
+#hud .prompt { position: absolute; left: 50%; top: calc(50% + 26px); transform: translateX(-50%); padding: 7px 12px; background: rgba(26,58,43,.84); border: 2px solid var(--tan); border-radius: 7px; color: var(--cream); font-size: 14px; letter-spacing: .4px; white-space: nowrap; }
+#hud .toast { position: absolute; bottom: 90px; width: 100%; text-align: center; font-size: 18px; padding: 0 20px; }
 #hud .result { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(26,58,43,.82); font-size: 28px; pointer-events: auto; }
 #hud .result h1 { font-size: 56px; margin: 0 0 12px; color: var(--mustard); }
 #hud .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--cream); vertical-align: -2px; }
+
+.camp-map { position: absolute; inset: 0; z-index: 12; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: rgba(19,32,25,.78); pointer-events: auto; }
+.camp-map canvas { width: min(88vw, 760px); height: auto; max-height: 78vh; border: 6px solid var(--wood); border-radius: 8px; box-shadow: 0 12px 40px rgba(0,0,0,.5); image-rendering: auto; }
+.camp-map-title { color: var(--mustard); font-size: clamp(22px, 3vw, 36px); letter-spacing: 2px; text-shadow: 3px 3px 0 var(--wood); }
+.camp-map-hint { background: var(--cream); color: var(--wood); padding: 6px 12px; border: 3px solid var(--wood); border-radius: 6px; font-size: 14px; }
 .hidden { display: none !important; }
+
+@media (max-width: 760px) {
+  #hud .tl { font-size: 11px; max-width: 74vw; }
+  #hud .tr { display: none; }
+  #hud .prompt { max-width: 88vw; white-space: normal; text-align: center; }
+  #hud .toast { font-size: 15px; }
+}
