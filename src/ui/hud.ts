@@ -19,8 +19,9 @@ export class Hud {
 
   constructor() {
     this.tl.append(this.objective,
-      h('div', {}, 'WASD move · Shift sprint · C crouch · E pick up/drop · Click throw'),
-      h('div', {}, 'G snap glowstick · 1-5 colour · F flashlight · N day/night (host)'));
+      h('div', {}, 'WASD move · Shift sprint · Tap Space jump · Hold Space crouch'),
+      h('div', {}, 'Click / E interact · Hold click then release to throw · R place/drop · F flashlight'),
+      h('div', {}, 'G snap glowstick · 1-5 colour · N day/night (host debug)'));
     this.root.append(this.tl, this.tr, h('div', { cls: 'cross' }), this.toastEl,
       h('div', { cls: 'bl' }, this.info, h('div', { cls: 'stam' }, this.bar)));
   }
@@ -28,8 +29,9 @@ export class Hud {
   private setText(el: HTMLElement, text: string): void { if (el.textContent !== text) el.textContent = text; }
 
   update(d: HudData): void {
-    this.setText(this.objective, `${d.night ? 'NIGHT' : 'DAY'} · loot ${d.collected}/${d.need} → bring it to the bus`);
-    this.setText(this.tr, `Campers: ${d.names.join(', ')} · ${d.fps} fps`);
+    const dusk = Math.max(0, Math.min(120, Math.round(d.time)));
+    this.setText(this.objective, `${d.night ? 'NIGHT' : `SUNSET ${dusk}s`} · supplies ${d.collected}/${d.need} → bus safe zone`);
+    this.setText(this.tr, `Counselors: ${d.names.join(', ')} · ${d.fps} fps`);
     this.bar.style.width = `${d.stamina}%`;
     this.setText(this.heldText, `Holding: ${d.held || 'nothing'}  `);
     this.setText(this.glowText, ` ${d.glow}`);
