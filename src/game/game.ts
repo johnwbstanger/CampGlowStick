@@ -8,6 +8,7 @@ import { TICK_MS } from '../net/protocol';
 import type { Session } from '../net/session';
 import { CampMap } from '../ui/campMap';
 import { Hud } from '../ui/hud';
+import { TouchControls } from '../ui/touchControls';
 import { Actor, RemotePlayer } from './avatars';
 import { CamperActor } from './campers';
 import { camperFoundLine, camperName } from './camperDialogue';
@@ -45,6 +46,7 @@ export class Game {
   local: LocalPlayer;
   hud = new Hud();
   campMap: CampMap;
+  touch: TouchControls;
   remotes = new Map<number, RemotePlayer>();
   items = new Map<number, ItemView>();
   campers = new Map<number, CamperView>();
@@ -82,6 +84,12 @@ export class Game {
     this.scene.add(this.world.group);
     this.local = new LocalPlayer(this.camera, this.renderer.domElement, layout);
     this.campMap = new CampMap(layout);
+    this.touch = new TouchControls(this.local, {
+      interact: () => this.interact(),
+      drop: () => this.act('drop'),
+      glow: () => this.act('snap'),
+      map: () => this.toggleMap(),
+    });
     const sp = layout.spawns[net.myId % layout.spawns.length];
     this.local.teleport(sp[0], sp[1]);
     for (const p of net.players) if (p.id !== net.myId) this.remotes.set(p.id, new RemotePlayer(p.id, p.name, this.scene));
@@ -95,7 +103,7 @@ export class Game {
     const made = HostSim.makeDefs(layout);
     for (const d of made.defs) this.addItemView(d);
 
-    root.replaceChildren(this.renderer.domElement, this.hud.root, this.campMap.root);
+    root.replaceChildren(this.renderer.domElement, this.hud.root, this.campMap.root, this.touch.root);
     this.resize();
     addEventListener('resize', this.resize);
     this.renderer.domElement.addEventListener('pointerdown', this.pointerDown);
@@ -114,6 +122,11 @@ export class Game {
     this.camera.updateProjectionMatrix();
   };
 
+  private toggleMap(): void {
+    const open = this.campMap.toggle();
+    if (open) document.exitPointerLock?.();
+  }
+
   private hasHeldItem(): boolean { return (this.snap?.players[this.net.myId]?.held ?? -1) >= 0; }
   private interact = (quickThrow = true): void => {
     if (this.snap?.over || this.campMap.open) return;
@@ -123,10 +136,13 @@ export class Game {
 
   private pointerDown = (e: PointerEvent): void => {
     if (e.button !== 0 || this.snap?.over || this.campMap.open) return;
+    // Touch is handled by the dedicated overlay and must never depend on Pointer Lock.
+    if (e.pointerType === 'touch') return;
     if (document.pointerLockElement !== this.renderer.domElement) { void this.renderer.domElement.requestPointerLock?.(); return; }
     if (this.hasHeldItem()) this.mouseDownAt = performance.now(); else this.interact();
   };
   private pointerUp = (e: PointerEvent): void => {
+    if (e.pointerType === 'touch') return;
     if (e.button !== 0 || !this.mouseDownAt || this.snap?.over || this.campMap.open) return;
     const heldMs = performance.now() - this.mouseDownAt; this.mouseDownAt = 0;
     this.act('throw', THREE.MathUtils.clamp((heldMs - 60) / 900, 0.2, 1));
@@ -134,11 +150,7 @@ export class Game {
 
   private key = (e: KeyboardEvent): void => {
     if (e.repeat || this.snap?.over) return;
-    if (e.code === 'KeyM') {
-      const open = this.campMap.toggle();
-      if (open) document.exitPointerLock?.();
-      return;
-    }
+    if (e.code === 'KeyM') { this.toggleMap(); return; }
     if (this.campMap.open) return;
     if (e.code === 'KeyE') this.interact();
     else if (e.code === 'KeyR') this.act('drop');
@@ -251,14 +263,16 @@ export class Game {
       const moving = v.target.distanceToSquared(v.lastTarget) > 0.0025;
       v.actor.root.position.lerp(v.target, damp(12, dt));
       if (moving) v.actor.root.rotation.y = Math.atan2(v.target.x - v.lastTarget.x, v.target.z - v.lastTarget.z) + Math.PI;
-      v.actor.update(dt, moving, this.monsterMode === 'chase');
+      const hiding = v.foundBy < 0 && !v.rescued;
+      v.actor.update(dt, moving, this.monsterMode === 'chase', hiding);
     }
     if (!this.snap?.over) {
       this.monster.root.position.lerp(this.monsterTarget, damp(8, dt));
       this.monster.play(this.monsterMode === 'idle' ? 'idle' : this.monsterMode === 'chase' ? 'sprint' : 'walk'); this.monster.update(dt);
     }
     this.voice?.update({ x: this.local.pos.x, y: this.local.pos.y + 1.6, z: this.local.pos.z, yaw: this.local.yaw }, (id) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, y: r.pos.y + 1.6, z: r.pos.z } : undefined; });
-    this.campMap.update(this.local.pos.x, this.local.pos.z, this.local.yaw);
+    const mapPlayers = [...this.remotes.values()].filter((r) => r.alive).map((r) => ({ x: r.pos.x, z: r.pos.z, name: r.name }));
+    this.campMap.update(this.local.pos.x, this.local.pos.z, this.local.yaw, mapPlayers);
     this.hud.update({ stamina: this.local.stamina, held: held.name, glow: this.glow, night: this.snap?.night ?? false, time: this.snap?.time ?? 0, collected: this.snap?.collected ?? 0, need: this.layout.need, rescued: this.snap?.rescued ?? 0, camperNeed: this.snap?.camperNeed ?? 7, names: this.net.players.map((p) => p.name), fps: this.fps, prompt: this.contextPrompt(held.name) });
     this.renderer.render(this.scene, this.camera);
   }
@@ -288,7 +302,7 @@ export class Game {
   removeRemote(id: number): void { this.remotes.get(id)?.dispose(this.scene); this.remotes.delete(id); }
   dispose(): void {
     this.disposed = true; this.timers.forEach(clearInterval); this.renderer.setAnimationLoop(null); removeEventListener('resize', this.resize); removeEventListener('keydown', this.key);
-    this.renderer.domElement.removeEventListener('pointerdown', this.pointerDown); this.renderer.domElement.removeEventListener('pointerup', this.pointerUp); this.local.dispose(); this.net.onHostMessage = undefined;
+    this.renderer.domElement.removeEventListener('pointerdown', this.pointerDown); this.renderer.domElement.removeEventListener('pointerup', this.pointerUp); this.touch.dispose(); this.local.dispose(); this.net.onHostMessage = undefined;
     delete window.__cg; document.exitPointerLock?.(); this.renderer.dispose();
   }
 }
