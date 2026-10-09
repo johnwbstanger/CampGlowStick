@@ -19,16 +19,28 @@ export class LocalPlayer {
   private exhausted = false;
   private eye: number = PLAYER.eye;
   private keys = new Set<string>();
+  private onKeyDown = (e: KeyboardEvent): void => { if (!e.repeat && e.code === 'KeyF') this.flash = !this.flash; this.keys.add(e.code); };
+  private onKeyUp = (e: KeyboardEvent): void => { this.keys.delete(e.code); };
+  private onBlur = (): void => { this.keys.clear(); };
+  private onMouseMove = (e: MouseEvent): void => {
+    if (document.pointerLockElement !== this.canvas) return;
+    this.yaw -= e.movementX * 0.0022;
+    this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - e.movementY * 0.0022));
+  };
 
-  constructor(private camera: THREE.PerspectiveCamera, canvas: HTMLElement) {
-    addEventListener('keydown', (e) => { if (!e.repeat && e.code === 'KeyF') this.flash = !this.flash; this.keys.add(e.code); });
-    addEventListener('keyup', (e) => this.keys.delete(e.code));
-    addEventListener('blur', () => this.keys.clear());
-    addEventListener('mousemove', (e) => {
-      if (document.pointerLockElement !== canvas) return;
-      this.yaw -= e.movementX * 0.0022;
-      this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - e.movementY * 0.0022));
-    });
+  constructor(private camera: THREE.PerspectiveCamera, private canvas: HTMLElement) {
+    addEventListener('keydown', this.onKeyDown);
+    addEventListener('keyup', this.onKeyUp);
+    addEventListener('blur', this.onBlur);
+    addEventListener('mousemove', this.onMouseMove);
+  }
+
+  dispose(): void {
+    removeEventListener('keydown', this.onKeyDown);
+    removeEventListener('keyup', this.onKeyUp);
+    removeEventListener('blur', this.onBlur);
+    removeEventListener('mousemove', this.onMouseMove);
+    this.keys.clear();
   }
 
   teleport(x: number, z: number): void { this.pos.x = x; this.pos.z = z; }

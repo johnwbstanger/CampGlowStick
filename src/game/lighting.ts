@@ -36,7 +36,7 @@ export class Lighting {
   flash = new THREE.SpotLight('#FFF1CF', 0, 32, 0.5, 0.45, 1.6);
   private fog = new THREE.Fog('#E0B97C', 10, 140);
 
-  constructor(private scene: THREE.Scene, private renderer: THREE.WebGLRenderer, camera: THREE.Camera) {
+  constructor(private scene: THREE.Scene, renderer: THREE.WebGLRenderer, camera: THREE.Camera) {
     scene.fog = this.fog;
     this.sun.position.set(-30, 22, -18);
     this.sun.castShadow = true;
@@ -66,10 +66,8 @@ export class Lighting {
 
   /** Shadows are only worth their cost in daylight. */
   private setShadows(on: boolean): void {
-    if (this.renderer.shadowMap.enabled === on) return;
-    this.renderer.shadowMap.enabled = on;
+    if (this.sun.castShadow === on) return;
     this.sun.castShadow = on;
-    this.scene.traverse((o) => { const m = (o as THREE.Mesh).material; if (m) (Array.isArray(m) ? m : [m]).forEach((x) => { x.needsUpdate = true; }); });
   }
 
   update(dt: number, flashOn: boolean): void {
