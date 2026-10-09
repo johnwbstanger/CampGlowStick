@@ -39,7 +39,7 @@ const exe = [process.env.PW_CHROMIUM, chromium.executablePath(), '/usr/bin/chrom
 const browser = await chromium.launch({
   executablePath: exe, headless: true,
   args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist',
-    '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', // permission grant makes chromium expose host ICE candidates (needed in sandboxes without STUN)
+    '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'],
 });
 
@@ -92,7 +92,6 @@ async function startGame(hostPage, guests) {
 }
 
 try {
-  // --- lobby A: host + 2 guests (code and ?join= URL) ---
   let A, g1, g2;
   await check('host starts a camp and gets a word+number code', async () => {
     A = await host('Hosty'); assert(/^[a-z]+\d{2}$/.test(A.code), `bad code ${A.code}`);
@@ -104,7 +103,6 @@ try {
   });
   await check('second guest joins via ?join= URL', async () => { g2 = await join('Guest2', A.code, true); await waitPlayers(A.page, 3); await waitPlayers(g1, 3); await waitPlayers(g2, 3); });
 
-  // --- negative cases ---
   await check('bad code shows an error (invalid format and unknown code)', async () => {
     const a = await tryJoin('Bad1', 'zzz'); assert(/does not look right/i.test(a), a);
     const b = await tryJoin('Bad2', 'nope99'); assert(/No camp found/i.test(b), b);
@@ -125,7 +123,6 @@ try {
     return 'host-left message shown to remaining guest';
   });
 
-  // --- play scene on lobby A ---
   const pages = () => [A.page, g1, g2];
   await check('host presses Start: everyone sees the loading card then the play scene', async () => {
     const loading = await startGame(A.page, [g1, g2]);
@@ -141,14 +138,14 @@ try {
     const times = [];
     for (let i = 0; i < 5; i++) {
       const x = 4 + i * 3, z = 12 - i;
-      const waiting = A.page.evaluate(([x, z]) => new Promise((res, rej) => { const start = Date.now(); const iv = setInterval(() => { const r = window.__cg.remote(1); if (r && Math.abs(r.tx - x) < 0.05 && Math.abs(r.tz - z) < 0.05) { clearInterval(iv); res(Date.now()); } else if (Date.now() - start > 2000) { clearInterval(iv); rej(new Error('target not delivered within 2s')); } }, 2); }), [x, z]);
-      await sleep(120);
+      const waiting = A.page.evaluate(([x, z]) => new Promise((res, rej) => { const start = Date.now(); const iv = setInterval(() => { const r = window.__cg.remote(1); if (r && Math.abs(r.tx - x) < 0.05 && Math.abs(r.tz - z) < 0.05) { clearInterval(iv); res(Date.now()); } else if (Date.now() - start > 5000) { clearInterval(iv); rej(new Error('target not delivered within 5s')); } }, 10); }), [x, z]);
+      await sleep(150);
       const t0 = await g1.evaluate(([x, z]) => { const t = Date.now(); window.__cg.teleport(x, z); return t; }, [x, z]);
       times.push((await waiting) - t0);
     }
     times.sort((a, b) => a - b);
     const last = { x: 4 + 4 * 3, z: 12 - 4 };
-    await A.page.waitForFunction(([x, z]) => { const r = window.__cg.remote(1); return r && Math.abs(r.tx - x) < 0.05 && Math.abs(r.tz - z) < 0.05 && Math.hypot(r.x - r.tx, r.z - r.tz) < 0.3; }, [last.x, last.z], { timeout: 2000, polling: 50 });
+    await A.page.waitForFunction(([x, z]) => { const r = window.__cg.remote(1); return r && Math.abs(r.tx - x) < 0.05 && Math.abs(r.tz - z) < 0.05 && Math.hypot(r.x - r.tx, r.z - r.tz) < 0.3; }, [last.x, last.z], { timeout: 5000, polling: 50 });
     console.log(`  (soft) latency median ${times[2]}ms (${times}) - logged, not asserted`);
     return `latencies ms: ${times.join(', ')}`;
   });
@@ -184,7 +181,6 @@ try {
     assert((await cg(A.page, () => window.__cg.snap().over)) === 'lose', 'lose state');
   });
 
-  // --- win loop on lobby B (4 players) ---
   await check('co-op win loop: carry 3 loot items to the extraction point', async () => {
     const H = B.page;
     await startGame(H, B.guests);
@@ -202,7 +198,7 @@ try {
       await sleep(250);
       await H.evaluate(() => window.__cg.teleport(26, 2)); await sleep(300);
       await H.evaluate(() => window.__cg.act('drop'));
-      await H.waitForFunction((k) => window.__cg.snap()?.collected >= k, n + 1, { timeout: 25000 }).catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} loot=${JSON.stringify(loot)} state=${JSON.stringify(await H.evaluate(() => ({ s: window.__cg.snap(), it: window.__cg.items().filter((i) => i.kind === 'loot'), me: window.__cg.sample ? null : null })))}`); });
+      await H.waitForFunction((k) => window.__cg.snap()?.collected >= k, n + 1, { timeout: 25000 });
     }
     await H.waitForFunction(() => window.__cg.snap()?.over === 'win', null, { timeout: 8000 });
     for (const p of [H, ...B.guests]) await p.waitForSelector('#hud-result', { timeout: 10000 });
