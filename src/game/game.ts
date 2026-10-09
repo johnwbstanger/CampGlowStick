@@ -35,7 +35,7 @@ export const assetsFor = (layout: Layout, playerIds: number[]): AssetName[] => {
 export class Game {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(75, 1, 0.05, 220);
+  camera = new THREE.PerspectiveCamera(75, 1, 0.05, 320);
   light: Lighting;
   world: World;
   local: LocalPlayer;
@@ -139,7 +139,7 @@ export class Game {
 
   private applySnap(s: GameSnap): void {
     this.snap = s;
-    this.light.setNight(s.night);
+    this.light.setTime(s.time, s.night);
     for (const [id, st] of Object.entries(s.players)) {
       const r = this.remotes.get(Number(id));
       if (r) { r.target = st; r.alive = st.alive; }
