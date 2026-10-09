@@ -18,7 +18,12 @@ export function mulberry32(seed: number): () => number {
   return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 
-const CABINS: [number, number][] = [[-34, -20], [-18, -27], [19, -28], [36, -19], [-37, 15], [-19, 25], [19, 25], [38, 14]];
+const CABINS: [number, number][] = [
+  [-82, -46], [-64, -56], [-43, -61], [-20, -57],
+  [21, -59], [45, -56], [68, -44],
+  [-88, 12], [-68, 24], [-46, 31], [-23, 35],
+  [18, 36], [43, 31], [67, 22], [86, 8],
+];
 const faceCentre = (x: number, z: number): number => Math.atan2(-x, -z);
 const distToSegment = (px: number, pz: number, ax: number, az: number, bx: number, bz: number): number => {
   const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz;
@@ -27,63 +32,91 @@ const distToSegment = (px: number, pz: number, ax: number, az: number, bx: numbe
   return Math.hypot(px - (ax + t * dx), pz - (az + t * dz));
 };
 
-/** Deterministic campground plan. The overlay drives roads, clearings, structures, trees and prop zones. */
+/** Large deterministic campground plan. Roads/clearings act as the map overlay and everything else is layered onto it. */
 export function buildLayout(seed: number, need = 3): Layout {
   const rng = mulberry32(seed);
   const roads: Road[] = [
-    { width: 6.5, points: [[-72, 47], [-52, 35], [-31, 23], [-8, 12], [17, 8], [42, 14], [68, 24]] },
-    { width: 5.2, points: [[-31, 23], [-35, 0], [-31, -22], [-10, -39], [18, -40], [42, -25], [42, 14]] },
-    { width: 4.4, points: [[-8, 12], [-19, 25], [-37, 15]] },
-    { width: 4.4, points: [[17, 8], [19, 25], [38, 14]] },
-    { width: 4.2, points: [[-10, -39], [-18, -27], [-34, -20]] },
-    { width: 4.2, points: [[18, -40], [19, -28], [36, -19]] },
-    { width: 4.0, points: [[42, 14], [58, 5], [65, -8]] },
+    { width: 7.5, points: [[-120, 68], [-98, 52], [-75, 38], [-52, 24], [-27, 13], [0, 6], [28, 2], [55, 10], [82, 20], [108, 32]] },
+    { width: 6.0, points: [[-75, 38], [-86, 10], [-82, -18], [-72, -42], [-45, -64], [-15, -72], [18, -71], [51, -60], [75, -40], [82, -8], [82, 20]] },
+    { width: 5.2, points: [[-52, 24], [-46, 31], [-68, 24], [-88, 12]] },
+    { width: 5.0, points: [[-27, 13], [-23, 35], [-46, 31]] },
+    { width: 5.0, points: [[0, 6], [18, 36], [43, 31], [67, 22], [86, 8]] },
+    { width: 4.8, points: [[-72, -42], [-64, -56], [-82, -46]] },
+    { width: 4.8, points: [[-45, -64], [-43, -61], [-20, -57]] },
+    { width: 4.8, points: [[18, -71], [21, -59], [45, -56], [68, -44]] },
+    { width: 4.2, points: [[0, 6], [-7, 56], [-23, 82], [-48, 94]] },
+    { width: 4.2, points: [[28, 2], [52, -10], [83, -13], [109, -3]] },
   ];
+
   const clearings: Clearing[] = [
-    { x: 0, z: 6, rx: 16, rz: 13 },
-    { x: -26, z: -24, rx: 22, rz: 15 },
-    { x: 27, z: -24, rx: 22, rz: 15 },
-    { x: -27, z: 20, rx: 23, rz: 15 },
-    { x: 28, z: 20, rx: 23, rz: 15 },
-    { x: 57, z: 5, rx: 15, rz: 13 },
+    { x: 0, z: 6, rx: 22, rz: 18 },
+    { x: -58, z: -52, rx: 40, rz: 24 },
+    { x: 46, z: -55, rx: 42, rz: 25 },
+    { x: -57, z: 25, rx: 43, rz: 23 },
+    { x: 52, z: 27, rx: 45, rz: 23 },
+    { x: -7, z: 57, rx: 22, rz: 17 },
+    { x: 89, z: -12, rx: 28, rz: 19 },
+    { x: -42, z: 89, rx: 24, rz: 18 },
   ];
 
   const statics: Placed[] = [];
   const add = (name: AssetName, x: number, z: number, rot: number, solid = true) => statics.push({ name, x, z, rot, solid });
+
+  // Main activity areas and landmarks.
   add('campfire', 0, 6, 0);
   CABINS.forEach(([x, z]) => add('cabin', x, z, faceCentre(x, z)));
-  add('shed', -8, -55, 0);
+  add('shed', -102, -42, 0.25);
+  add('shed', 97, -29, -0.4);
   add('bus', 31, 2, Math.PI / 2);
-  add('tent', -8, 21, 0.6); add('tent', 10, 20, -0.5); add('tent', -9, -19, 0.25); add('tent', 9, -18, -0.2);
-  add('canoe', 58, 3, 0.4); add('logs', 4, 10, 0.8); add('logs', -5, 2, 2.1);
-  add('rock', -54, -4, 1); add('rock', 52, 33, 2); add('boulder', 8, 55, 0.2);
-  add('sign', -47, 33, 0.3); add('sign', 43, 14, -0.4); add('sign', -6, -43, 0.1);
-  CABINS.slice(0, 4).forEach(([x, z]) => add('bunk', x + (x < 0 ? 3 : -3), z + (z < 0 ? 3 : -3), rng() * 3));
+
+  // Tent fields and satellite campsites.
+  const tents: [number, number, number][] = [
+    [-17, 54, 0.4], [-5, 61, -0.3], [8, 56, 0.7], [15, 67, -0.8],
+    [-96, 72, 0.2], [-86, 78, -0.5], [-74, 70, 0.9],
+    [91, 57, -0.2], [101, 63, 0.5], [110, 55, -0.7],
+    [-11, -24, 0.1], [7, -24, -0.25], [18, -31, 0.5],
+  ];
+  tents.forEach(([x, z, r]) => add('tent', x, z, r));
+
+  // Waterfront / activity props used as static landmarks.
+  add('canoe', 101, -5, 0.3); add('canoe', 105, -1, 0.15); add('canoe', 109, 3, 0.45);
+  add('logs', 4, 11, 0.8); add('logs', -6, 2, 2.1); add('logs', -1, -2, 1.4);
+  add('boulder', -115, -2, 0.2); add('boulder', 115, 47, 0.4); add('boulder', -15, 112, 1.2);
+  add('rock', -107, -9, 1.0); add('rock', 92, 77, 2.0); add('rock', 36, 108, 0.7); add('rock', -79, 98, 1.8);
+
+  const signs: [number, number, number][] = [
+    [-100, 53, 0.3], [-73, 38, -0.2], [-50, 24, 0.1], [-28, 13, 0.2],
+    [26, 3, -0.1], [57, 10, -0.3], [82, 20, 0.2], [104, 31, -0.4],
+    [-44, -64, 0.1], [51, -60, -0.2], [-8, 55, 0.3], [88, -11, -0.4],
+  ];
+  signs.forEach(([x, z, r]) => add('sign', x, z, r));
+
+  // Bunks and visual clutter around cabin groups.
+  CABINS.slice(0, 10).forEach(([x, z], i) => add('bunk', x + (i % 2 ? 3 : -3), z + (i % 3 ? 2.5 : -2.5), rng() * Math.PI * 2));
 
   const keepOut = statics.map((s) => [s.x, s.z] as const);
   const nearRoad = (x: number, z: number): boolean => roads.some((road) => road.points.slice(1).some(([bx, bz], i) => {
-    const [ax, az] = road.points[i]; return distToSegment(x, z, ax, az, bx, bz) < road.width * 0.75 + 1.8;
+    const [ax, az] = road.points[i]; return distToSegment(x, z, ax, az, bx, bz) < road.width * 0.75 + 1.7;
   }));
   const inClearing = (x: number, z: number): boolean => clearings.some((c) => ((x - c.x) / c.rx) ** 2 + ((z - c.z) / c.rz) ** 2 < 1);
 
   const trees: Placed[] = [];
   const kinds: AssetName[] = ['tree', 'tree2', 'tree3'];
-  for (let i = 0; i < 1600 && trees.length < 210; i++) {
+  for (let i = 0; i < 5200 && trees.length < 430; i++) {
     const x = (rng() * 2 - 1) * (WORLD_HALF - 4), z = (rng() * 2 - 1) * (WORLD_HALF - 4);
     if (keepOut.some(([kx, kz]) => Math.hypot(kx - x, kz - z) < 6)) continue;
     if (nearRoad(x, z) || inClearing(x, z)) continue;
-    if (Math.hypot(x - 31, z - 2) < 10) continue;
+    if (Math.hypot(x - 31, z - 2) < 13) continue;
     trees.push({ name: kinds[Math.floor(rng() * kinds.length)], x, z, rot: rng() * Math.PI * 2, solid: true });
   }
 
   const decals: Decal[] = [];
-  CABINS.slice(0, 4).forEach((_, i) => { for (let side = 0; side < 2; side++) { const text = pickGraffiti(rng); decals.push({ host: i + 1, side, text, creepy: text.startsWith('I SAW') || text.startsWith('IT ') || text.startsWith('DON') }); } });
-  decals.push({ host: 9, side: 0, text: 'DO NOT EAT THE CHILI', creepy: false });
+  CABINS.slice(0, 8).forEach((_, i) => { for (let side = 0; side < 2; side++) { const text = pickGraffiti(rng); decals.push({ host: i + 1, side, text, creepy: text.startsWith('I SAW') || text.startsWith('IT ') || text.startsWith('DON') }); } });
 
   const items: ItemSpawn[] = [];
   const lootModels: AssetName[] = ['lantern', 'radio', 'backpack', 'cooler', 'lantern', 'radio', 'backpack', 'cooler'];
-  const lootSpots: [number, number][] = [[-32, -18], [-18, -24], [18, -25], [34, -18], [-35, 14], [-18, 22], [18, 22], [36, 13]];
-  for (let i = 0; i < Math.max(need + 3, 6); i++) items.push({ model: lootModels[i % lootModels.length], kind: 'loot', x: lootSpots[i % lootSpots.length][0], z: lootSpots[i % lootSpots.length][1] });
+  const lootSpots: [number, number][] = CABINS.map(([x, z], i) => [x + (i % 2 ? 2.5 : -2.5), z + (i % 3 ? 2 : -2)]);
+  for (let i = 0; i < Math.max(need + 6, 9); i++) items.push({ model: lootModels[i % lootModels.length], kind: 'loot', x: lootSpots[i % lootSpots.length][0], z: lootSpots[i % lootSpots.length][1] });
 
   const zone = (cx: number, cz: number, rx: number, rz: number, pool: AssetName[], count: number) => {
     for (let i = 0; i < count; i++) {
@@ -91,14 +124,23 @@ export function buildLayout(seed: number, need = 3): Layout {
       items.push({ model: pool[Math.floor(rng() * pool.length)], kind: 'prop', x: cx + Math.cos(a) * rx * r, z: cz + Math.sin(a) * rz * r });
     }
   };
+
   const campPool: AssetName[] = ['mug', 'bottle', 'can', 'bucket', 'lantern', 'radio', 'backpack', 'cooler', 'crate', 'sock'];
   const workPool: AssetName[] = ['crate', 'bucket', 'barrel', 'axe', 'bottle', 'can', 'paddle'];
-  CABINS.forEach(([x, z]) => zone(x, z, 6.5, 5, campPool, 5));
-  zone(0, 6, 12, 10, ['mug', 'bottle', 'can', 'lantern', 'radio', 'crate', 'bucket'], 18);
-  zone(-8, -54, 10, 7, workPool, 16);
-  zone(56, 4, 10, 8, ['paddle', 'bucket', 'bottle', 'crate', 'cooler', 'backpack'], 12);
-  zone(-8, 20, 9, 7, campPool, 10); zone(8, -19, 9, 7, campPool, 10);
+  const waterfrontPool: AssetName[] = ['paddle', 'bucket', 'bottle', 'crate', 'cooler', 'backpack', 'radio'];
+
+  // Dense, believable clutter: every cabin gets its own small prop field.
+  CABINS.forEach(([x, z], i) => zone(x + (i % 2 ? 2 : -2), z + (i % 3 ? 1 : -1), 7.5, 5.5, campPool, 8));
+  zone(0, 6, 17, 13, campPool, 28);                    // central fire / dining clearing
+  zone(-101, -42, 14, 10, workPool, 24);              // maintenance yard west
+  zone(97, -29, 14, 10, workPool, 22);                // maintenance yard east
+  zone(104, -2, 16, 12, waterfrontPool, 24);          // waterfront
+  zone(-7, 58, 18, 13, campPool, 22);                 // north tent field
+  zone(-86, 74, 17, 12, campPool, 18);                // northwest campsite
+  zone(101, 60, 17, 12, campPool, 18);                // northeast campsite
+  zone(-46, 89, 15, 11, ['crate', 'cooler', 'backpack', 'radio', 'lantern', 'mug'], 16);
+  zone(28, 2, 11, 8, ['crate', 'cooler', 'backpack', 'radio', 'lantern'], 14); // bus staging area
 
   const spawns: [number, number][] = Array.from({ length: 8 }, (_, i) => [22 + Math.cos((i / 8) * Math.PI * 2) * 4, 5 + Math.sin((i / 8) * Math.PI * 2) * 2]);
-  return { statics, trees, decals, items, spawns, roads, clearings, extraction: { x: 28, z: 2, r: 5 }, monsterStart: [-68, -58], need };
+  return { statics, trees, decals, items, spawns, roads, clearings, extraction: { x: 28, z: 2, r: 5 }, monsterStart: [-118, -104], need };
 }

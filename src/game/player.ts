@@ -5,7 +5,11 @@ import { damp } from './interp';
 import { stepStamina } from './stamina';
 import type { PlayerState } from '../net/protocol';
 
-/** First-person controller: WASD + mouse look, Shift sprint (stamina), C/Ctrl crouch. */
+const CROUCH_HOLD_MS = 180;
+const JUMP_SPEED = 5.4;
+const GRAVITY = 15.5;
+
+/** First-person controller: WASD + mouse look, Shift sprint, tap Space to jump, hold Space to crouch. */
 export class LocalPlayer {
   pos = { x: 0, y: 0, z: 0 };
   yaw = 0;
@@ -19,9 +23,34 @@ export class LocalPlayer {
   private exhausted = false;
   private eye: number = PLAYER.eye;
   private keys = new Set<string>();
-  private onKeyDown = (e: KeyboardEvent): void => { if (!e.repeat && e.code === 'KeyF') this.flash = !this.flash; this.keys.add(e.code); };
-  private onKeyUp = (e: KeyboardEvent): void => { this.keys.delete(e.code); };
-  private onBlur = (): void => { this.keys.clear(); };
+  private spaceDownAt = 0;
+  private jumpVelocity = 0;
+  private grounded = true;
+
+  private onKeyDown = (e: KeyboardEvent): void => {
+    if (!e.repeat && e.code === 'KeyF') this.flash = !this.flash;
+    if (!e.repeat && e.code === 'Space') {
+      e.preventDefault();
+      this.spaceDownAt = performance.now();
+    }
+    this.keys.add(e.code);
+  };
+
+  private onKeyUp = (e: KeyboardEvent): void => {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      const heldMs = this.spaceDownAt ? performance.now() - this.spaceDownAt : Infinity;
+      // A quick tap is a jump; a deliberate hold is crouch-only and does not jump on release.
+      if (heldMs < CROUCH_HOLD_MS && this.grounded && this.alive) {
+        this.jumpVelocity = JUMP_SPEED;
+        this.grounded = false;
+      }
+      this.spaceDownAt = 0;
+    }
+    this.keys.delete(e.code);
+  };
+
+  private onBlur = (): void => { this.keys.clear(); this.spaceDownAt = 0; this.crouch = false; };
   private onMouseMove = (e: MouseEvent): void => {
     if (document.pointerLockElement !== this.canvas) return;
     this.yaw -= e.movementX * 0.0022;
@@ -50,20 +79,34 @@ export class LocalPlayer {
     const k = this.keys;
     const f = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0);
     const s = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
-    this.crouch = k.has('KeyC') || k.has('ControlLeft');
+    const heldSpaceMs = k.has('Space') && this.spaceDownAt ? performance.now() - this.spaceDownAt : 0;
+    this.crouch = this.grounded && heldSpaceMs >= CROUCH_HOLD_MS;
     this.moving = this.alive && (f !== 0 || s !== 0);
+
     if (this.exhausted && this.stamina > STAMINA.minToSprint) this.exhausted = false;
-    this.sprint = this.moving && !this.crouch && k.has('ShiftLeft') && !this.exhausted && this.stamina > 0;
+    this.sprint = this.moving && !this.crouch && this.grounded && k.has('ShiftLeft') && !this.exhausted && this.stamina > 0;
     this.stamina = stepStamina(this.stamina, dt, this.sprint, carry);
     if (this.stamina <= 0) this.exhausted = true;
+
     if (this.moving) {
       const speed = this.crouch ? PLAYER.crouch : this.sprint ? PLAYER.sprint : PLAYER.walk;
       const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw), len = Math.hypot(f, s);
-      // forward = (-sin, -cos); right = (cos, -sin)
       this.pos.x += ((-sin * f + cos * s) / len) * speed * dt;
       this.pos.z += ((-cos * f - sin * s) / len) * speed * dt;
       resolveCapsule(this.pos, PLAYER.radius, this.crouch ? PLAYER.crouchHeight : PLAYER.height, colliders, WORLD_HALF);
     }
+
+    // Simple responsive jump arc. Ground is y=0 for the current camp terrain.
+    if (!this.grounded || this.jumpVelocity > 0) {
+      this.jumpVelocity -= GRAVITY * dt;
+      this.pos.y += this.jumpVelocity * dt;
+      if (this.pos.y <= 0) {
+        this.pos.y = 0;
+        this.jumpVelocity = 0;
+        this.grounded = true;
+      }
+    }
+
     this.eye += ((this.crouch ? PLAYER.crouchEye : PLAYER.eye) - this.eye) * damp(12, dt);
     this.camera.position.set(this.pos.x, this.pos.y + this.eye, this.pos.z);
     this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
