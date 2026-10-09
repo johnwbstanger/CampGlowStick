@@ -25,7 +25,6 @@ export class CamperActor {
   private leftArm = new THREE.Group();
   private rightArm = new THREE.Group();
   private t = 0;
-  private moving = false;
 
   constructor(public id: number) {
     const p = palettes[id % palettes.length];
@@ -66,13 +65,12 @@ export class CamperActor {
     add(head, new THREE.SphereGeometry(0.022, 9, 7), 0x2a2421, 0.058, 0.01, 0.155);
     add(head, new THREE.BoxGeometry(0.055, 0.008, 0.008), 0x70453f, 0, -0.075, 0.158);
 
-    // Child-size, rounded, smooth and matte rather than blocky/voxel-like.
     this.root.scale.setScalar(0.9 + (id % 3) * 0.035);
     this.root.name = `camper-${id}`;
   }
 
   update(dt: number, moving: boolean, scared = false): void {
-    this.t += dt; this.moving = moving;
+    this.t += dt;
     const phase = Math.sin(this.t * (moving ? 7 : 2));
     const a = moving ? 0.55 : 0.025;
     this.leftLeg.rotation.x = phase * a; this.rightLeg.rotation.x = -phase * a;
