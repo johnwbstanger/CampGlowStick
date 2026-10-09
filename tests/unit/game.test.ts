@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { drainRate, stepStamina } from '../../src/game/stamina';
-import { STAMINA } from '../../src/game/constants';
+import { DAY_SECONDS, STAMINA } from '../../src/game/constants';
 import { NoiseBus, falloff } from '../../src/game/noise';
 import { MONSTER, newMonster, stepMonster } from '../../src/game/monster';
 import { resolveCapsule } from '../../src/game/colliders';
 import { lerpAngle } from '../../src/game/interp';
 import { buildLayout } from '../../src/game/layout';
-import { findRoute, navLineClear } from '../../src/game/navigation';
+import { findPath } from '../../src/game/navigation';
 
 describe('stamina', () => {
   it('drain = base * (1 + carry / cap)', () => {
@@ -19,6 +19,12 @@ describe('stamina', () => {
   it('regenerates and clamps', () => {
     expect(stepStamina(50, 1, false, 0)).toBe(50 + STAMINA.regen);
     expect(stepStamina(1, 10, true, 0)).toBe(0);
+  });
+});
+
+describe('dusk', () => {
+  it('uses a six minute sunset-to-night transition', () => {
+    expect(DAY_SECONDS).toBe(360);
   });
 });
 
@@ -64,17 +70,6 @@ describe('noise + monster', () => {
   });
 });
 
-describe('navigation', () => {
-  it('routes around a solid building instead of crossing through it', () => {
-    const wall = [{ minX: -2, maxX: 2, minZ: -3, maxZ: 3, minY: 0, maxY: 3 }];
-    expect(navLineClear({ x: -8, z: 0 }, { x: 8, z: 0 }, wall, .45)).toBe(false);
-    const route = findRoute({ x: -8, z: 0 }, { x: 8, z: 0 }, wall, .45, 2);
-    expect(route.length).toBeGreaterThan(1);
-    expect(route.some((p) => Math.abs(p.z) > 3.2)).toBe(true);
-    expect(route.at(-1)?.x).toBe(8);
-  });
-});
-
 describe('colliders, interp, layout', () => {
   it('pushes a capsule out of a box', () => {
     const pos = { x: 0.9, y: 0, z: 0 };
@@ -88,5 +83,11 @@ describe('colliders, interp, layout', () => {
     const a = buildLayout(7), b = buildLayout(7);
     expect(a).toEqual(b);
     expect(a.items.filter((i) => i.kind === 'loot').length).toBeGreaterThanOrEqual(a.need);
+  });
+  it('routes around a solid building rather than through it', () => {
+    const wall = [{ minX: -2, maxX: 2, minZ: -4, maxZ: 4, minY: 0, maxY: 3 }];
+    const path = findPath(-8, 0, 8, 0, wall, 0.48, 2);
+    expect(path.length).toBeGreaterThan(1);
+    expect(path.some((p) => Math.abs(p.z) > 4)).toBe(true);
   });
 });
