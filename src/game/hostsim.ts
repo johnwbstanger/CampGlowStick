@@ -70,7 +70,7 @@ export class HostSim {
 
   static makeDefs(layout: Layout): { defs: ItemDef[]; spawnById: Map<number, [number, number]> } {
     const spawnById = new Map<number, [number, number]>();
-    const defs = layout.items.map((s, i) => { spawnById.set(i + 1, [s.x, s.z]); return { id: i + 1, model: s.model, kind: s.kind, mat: propInfo(s.model).mat } satisfies ItemDef; });
+    const defs: ItemDef[] = layout.items.map((s, i) => { spawnById.set(i + 1, [s.x, s.z]); return { id: i + 1, model: s.model, kind: s.kind, mat: propInfo(s.model).mat }; });
     const gunId = defs.length + 1;
     defs.push({ id: gunId, model: 'directorGun', kind: 'prop', mat: 'metal' });
     // On the director's desk, not randomly somewhere in the map.
@@ -124,12 +124,12 @@ export class HostSim {
     } else if (msg.a === 'drop') this.release(from, false);
     else if (msg.a === 'throw') this.release(from, true, msg.force ?? 0.35);
     else if (msg.a === 'snap') this.snap(from, pl, msg.color ?? 'green');
-    else if (msg.a === 'fire') this.fire(from, pl);
+    else if (msg.a === 'fire') this.fire(pl);
   }
 
   private forward(pl: SimPlayer): [number, number] { return [-Math.sin(pl.state.yaw), -Math.cos(pl.state.yaw)]; }
 
-  private fire(id: number, pl: SimPlayer): void {
+  private fire(pl: SimPlayer): void {
     const it = pl.state.held >= 0 ? this.items.get(pl.state.held) : undefined;
     if (!it || it.def.model !== 'directorGun') return;
     const [fx, fz] = this.forward(pl), px = pl.state.p[0], pz = pl.state.p[2];
