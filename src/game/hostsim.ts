@@ -7,9 +7,10 @@ import { GLOW_MASS, propInfo } from './items';
 import type { Layout } from './layout';
 import { newMonster, stepMonster } from './monster';
 import { NoiseBus, VOLUME, impactVolume, stepVolume, type Noise } from './noise';
+import { terrainHeight } from './terrain';
 
 interface SimPlayer { state: PlayerState; alive: boolean; stepT: number }
-interface SimItem { def: ItemDef; body: CANNON.Body; mass: number; holder: number; lastHit: number }
+interface SimItem { def: ItemDef; body: CANNON.Body; mass: number; holder: number; lastHit: number; halfY: number }
 export interface Sizes { get(model: string): { x: number; y: number; z: number } | undefined }
 
 const MAX_GLOW = 60;
@@ -34,16 +35,23 @@ export class HostSim {
     this.world.broadphase = new CANNON.SAPBroadphase(this.world);
     this.world.allowSleep = true;
     const mat = new CANNON.Material('prop');
-    this.world.defaultContactMaterial = new CANNON.ContactMaterial(mat, mat, { friction: 0.5, restitution: 0.35 });
-    const ground = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
-    ground.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
-    this.world.addBody(ground);
+    this.world.defaultContactMaterial = new CANNON.ContactMaterial(mat, mat, { friction: 0.58, restitution: 0.28 });
+    const catchPlane = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
+    catchPlane.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+    catchPlane.position.y = -7;
+    this.world.addBody(catchPlane);
     for (const b of colliders) {
       const body = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Box(new CANNON.Vec3((b.maxX - b.minX) / 2, (b.maxY - b.minY) / 2, (b.maxZ - b.minZ) / 2)) });
       body.position.set((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, (b.minZ + b.maxZ) / 2);
       this.world.addBody(body);
     }
-    for (const d of defs) { const at = spawnById.get(d.id) ?? [0, 0]; this.addItem(d, at[0], 1.5, at[1]); this.nextId = Math.max(this.nextId, d.id + 1); }
+    for (const d of defs) {
+      const at = spawnById.get(d.id) ?? [0, 0];
+      const sz = d.kind === 'glow' ? { x: 0.04, y: 0.04, z: 0.2 } : (this.sizes.get(d.model) ?? { x: 0.3, y: 0.3, z: 0.3 });
+      const y = terrainHeight(at[0], at[1], layout) + Math.max(0.03, sz.y / 2) + 0.03;
+      this.addItem(d, at[0], y, at[1]);
+      this.nextId = Math.max(this.nextId, d.id + 1);
+    }
     net.onHostMessage = (from, msg) => this.handle(from, msg);
     for (const p of net.players) this.addPlayer(p.id, layout.spawns[p.id % layout.spawns.length]);
   }
@@ -55,15 +63,16 @@ export class HostSim {
   }
 
   private addPlayer(id: number, spawn: [number, number]): void {
-    this.players.set(id, { alive: true, stepT: 0, state: { p: [spawn[0], 0, spawn[1]], yaw: 0, pitch: 0, crouch: false, sprint: false, moving: false, held: -1, flash: false, stamina: 100 } });
+    this.players.set(id, { alive: true, stepT: 0, state: { p: [spawn[0], terrainHeight(spawn[0], spawn[1], this.layout), spawn[1]], yaw: 0, pitch: 0, crouch: false, sprint: false, moving: false, held: -1, flash: false, stamina: 100 } });
   }
 
   private addItem(def: ItemDef, x: number, y: number, z: number): SimItem {
     const mass = def.kind === 'glow' ? GLOW_MASS : propInfo(def.model).mass;
     const sz = def.kind === 'glow' ? { x: 0.04, y: 0.04, z: 0.2 } : (this.sizes.get(def.model) ?? { x: 0.3, y: 0.3, z: 0.3 });
-    const body = new CANNON.Body({ mass, shape: new CANNON.Box(new CANNON.Vec3(Math.max(0.02, sz.x / 2), Math.max(0.02, sz.y / 2), Math.max(0.02, sz.z / 2))), linearDamping: 0.1, angularDamping: 0.3, sleepSpeedLimit: 0.2, sleepTimeLimit: 0.6 });
+    const halfY = Math.max(0.02, sz.y / 2);
+    const body = new CANNON.Body({ mass, shape: new CANNON.Box(new CANNON.Vec3(Math.max(0.02, sz.x / 2), halfY, Math.max(0.02, sz.z / 2))), linearDamping: 0.13, angularDamping: 0.38, sleepSpeedLimit: 0.18, sleepTimeLimit: 0.45 });
     body.position.set(x, y, z);
-    const it: SimItem = { def, body, mass, holder: -1, lastHit: 0 };
+    const it: SimItem = { def, body, mass, holder: -1, lastHit: 0, halfY };
     body.addEventListener('collide', (e: { contact: CANNON.ContactEquation }) => {
       const v = Math.abs(e.contact.getImpactVelocityAlongNormal());
       if (v < 1.4 || this.time - it.lastHit < 0.3 || def.kind === 'glow') return;
@@ -81,6 +90,11 @@ export class HostSim {
     if (mat !== 'step') this.fresh.push(n);
   }
 
+  private inBusZone(x: number, z: number): boolean {
+    const ex = this.layout.extraction;
+    return Math.hypot(x - ex.x, z - ex.z) < ex.r * 0.85;
+  }
+
   handle(from: number, msg: Msg): void {
     const pl = this.players.get(from);
     if (msg.t === 'bye') { this.release(from, false); this.players.delete(from); return; }
@@ -91,7 +105,7 @@ export class HostSim {
     if (msg.a === 'night' && from === 0) this.night = !this.night;
     else if (msg.a === 'pick') { if (held >= 0) this.release(from, false); else this.pickup(from, pl); }
     else if (msg.a === 'drop') this.release(from, false);
-    else if (msg.a === 'throw') this.release(from, true);
+    else if (msg.a === 'throw') this.release(from, true, msg.force ?? 0.35);
     else if (msg.a === 'snap') this.snap(from, pl, msg.color ?? 'green');
   }
 
@@ -103,7 +117,7 @@ export class HostSim {
     for (const it of this.items.values()) {
       if (it.holder >= 0) continue;
       const dx = it.body.position.x - px, dz = it.body.position.z - pz, d = Math.hypot(dx, dz, it.body.position.y - (py + 0.9) * 0.6);
-      if (d < bd && (d < 1 || (dx * fx + dz * fz) / (Math.hypot(dx, dz) || 1) > 0.2)) { bd = d; best = it; }
+      if (d < bd && (d < 1 || (dx * fx + dz * fz) / (Math.hypot(dx, dz) || 1) > 0.45)) { bd = d; best = it; }
     }
     if (best) this.hold(id, pl, best);
   }
@@ -115,7 +129,7 @@ export class HostSim {
     this.noise(it.body.position.x, it.body.position.z, 0.6, it.def.mat === 'glass' ? 'plastic' : it.def.mat);
   }
 
-  private release(id: number, thrown: boolean): void {
+  private release(id: number, thrown: boolean, force = 0.35): void {
     const pl = this.players.get(id);
     if (!pl || pl.state.held < 0) return;
     const it = this.items.get(pl.state.held);
@@ -123,9 +137,12 @@ export class HostSim {
     if (!it) return;
     it.holder = -1;
     it.body.type = CANNON.Body.DYNAMIC; it.body.mass = it.mass; it.body.updateMassProperties(); it.body.wakeUp();
-    const [fx, fz] = this.forward(pl), sp = thrown ? 11 : 1.2;
-    it.body.velocity.set(fx * sp, thrown ? 3.5 : 0.5, fz * sp);
-    if (thrown) { it.body.angularVelocity.set(Math.random() * 6 - 3, Math.random() * 6 - 3, Math.random() * 6 - 3); this.noise(pl.state.p[0], pl.state.p[2], VOLUME.throw, 'step'); }
+    const [fx, fz] = this.forward(pl), charge = Math.max(0, Math.min(1, force)), sp = thrown ? 7 + charge * 10 : 1.0;
+    it.body.velocity.set(fx * sp, thrown ? 2.2 + charge * 4.2 : 0.35, fz * sp);
+    if (thrown) {
+      it.body.angularVelocity.set(Math.random() * 6 - 3, Math.random() * 6 - 3, Math.random() * 6 - 3);
+      this.noise(pl.state.p[0], pl.state.p[2], VOLUME.throw * (0.65 + charge * 0.55), 'step');
+    }
   }
 
   private snap(id: number, pl: SimPlayer, color: string): void {
@@ -133,7 +150,7 @@ export class HostSim {
     if (glows.length >= MAX_GLOW) return;
     const def: ItemDef = { id: this.nextId++, model: 'glowstick', kind: 'glow', color, mat: 'glow' };
     const [fx, fz] = this.forward(pl);
-    const it = this.addItem(def, pl.state.p[0] + fx * 0.6, 1.2, pl.state.p[2] + fz * 0.6);
+    const it = this.addItem(def, pl.state.p[0] + fx * 0.6, pl.state.p[1] + 1.2, pl.state.p[2] + fz * 0.6);
     this.net.broadcast({ t: 'spawn', def });
     this.noise(pl.state.p[0], pl.state.p[2], 1, 'glow');
     if (pl.state.held < 0) this.hold(id, pl, it);
@@ -157,7 +174,18 @@ export class HostSim {
         it.body.velocity.setZero();
       } else if (s.held >= 0) s.held = -1;
     }
+
     this.world.step(1 / 60, dt, 3);
+    for (const it of this.items.values()) {
+      if (it.holder >= 0) continue;
+      const floorY = terrainHeight(it.body.position.x, it.body.position.z, this.layout) + it.halfY;
+      if (it.body.position.y < floorY && it.body.velocity.y <= 0) {
+        it.body.position.y = floorY;
+        it.body.velocity.y = Math.max(0, -it.body.velocity.y * 0.12);
+        it.body.velocity.x *= 0.84; it.body.velocity.z *= 0.84;
+        if (Math.abs(it.body.velocity.x) + Math.abs(it.body.velocity.z) < 0.08) it.body.sleep();
+      }
+    }
     this.bus.prune(this.time);
 
     const ex = this.layout.extraction;
@@ -168,11 +196,19 @@ export class HostSim {
         this.noise(ex.x, ex.z, 1, 'metal');
       }
     }
+
     if (!this.over) {
-      const prey = [...this.players.entries()].map(([id, p]) => ({ id, x: p.state.p[0], z: p.state.p[2], crouch: p.state.crouch, alive: p.alive }));
+      const prey = [...this.players.entries()].map(([id, p]) => ({
+        id, x: p.state.p[0], z: p.state.p[2], crouch: p.state.crouch,
+        alive: p.alive && !this.inBusZone(p.state.p[0], p.state.p[2]),
+      }));
       const caught = stepMonster(this.monster, dt, this.time, this.bus, prey, this.night, Math.random, this.colliders);
-      if (caught !== null) { const p = this.players.get(caught); if (p) p.alive = false; this.over = 'lose'; }
-      else if (this.collected >= this.layout.need && [...this.players.values()].some((p) => p.alive && Math.hypot(p.state.p[0] - ex.x, p.state.p[2] - ex.z) < ex.r)) this.over = 'win';
+      if (caught !== null) {
+        const p = this.players.get(caught);
+        if (p && !this.inBusZone(p.state.p[0], p.state.p[2])) p.alive = false;
+        if ([...this.players.values()].every((x) => !x.alive || this.inBusZone(x.state.p[0], x.state.p[2]))) this.over = this.collected >= this.layout.need ? 'win' : '';
+        else if (p && !p.alive) this.over = 'lose';
+      } else if (this.collected >= this.layout.need && [...this.players.values()].some((p) => p.alive && this.inBusZone(p.state.p[0], p.state.p[2]))) this.over = 'win';
     }
   }
 
