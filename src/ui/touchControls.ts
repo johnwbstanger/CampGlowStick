@@ -8,11 +8,8 @@ export interface TouchActions {
 }
 
 /**
- * iPad/mobile overlay. It is deliberately enabled from navigator.maxTouchPoints rather than
- * only CSS pointer media queries because iPadOS with a Magic Keyboard reports a fine pointer
- * even though the touchscreen is still present.
- *
- * Left thumb = move. Right side drag = look. Right-side tap = context interact/throw/fire.
+ * iPad/mobile controls that do not depend on CSS pointer media queries or Pointer Lock.
+ * Supports touch, Apple Pencil/pointer events, and Magic Keyboard trackpad clicks/drags.
  */
 export class TouchControls {
   root = document.createElement('div');
@@ -23,35 +20,39 @@ export class TouchControls {
   private lookId = -1;
   private moveOrigin = { x: 0, y: 0 };
   private lookLast = { x: 0, y: 0 };
-  private lookTravel = 0;
-  private lookDownAt = 0;
+  private lookStart = { x: 0, y: 0 };
+  private lookMoved = false;
+  private touchMoveIdentifier = -1;
+  private touchLookIdentifier = -1;
+  private lastActionAt = 0;
 
-  constructor(private player: LocalPlayer, actions: TouchActions) {
+  constructor(private player: LocalPlayer, private actions: TouchActions) {
     this.root.className = 'touch-controls';
-
-    // Critical iPadOS/Magic Keyboard fix: maxTouchPoints stays > 0 even when the active
-    // pointer is the trackpad, while CSS (pointer: coarse) may stop matching.
-    const touchCapable = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
-    if (touchCapable) {
-      this.root.classList.add('touch-capable');
-      this.root.style.display = 'block';
-    }
+    // iPad with Magic Keyboard often reports a fine pointer, so CSS media queries alone are unreliable.
+    if (navigator.maxTouchPoints > 0) this.root.style.display = 'block';
 
     this.movePad.className = 'touch-move';
     this.knob.className = 'touch-knob';
     this.movePad.append(this.knob);
+
     this.lookPad.className = 'touch-look';
     this.lookPad.setAttribute('aria-label', 'Drag to look; tap to use');
+
+    const safeAction = (fn: () => void) => {
+      const now = performance.now();
+      if (now - this.lastActionAt < 120) return;
+      this.lastActionAt = now;
+      fn();
+    };
 
     const button = (text: string, cls: string, fn: () => void) => {
       const b = document.createElement('button');
       b.className = `touch-btn ${cls}`;
       b.textContent = text;
-      b.addEventListener('pointerdown', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        fn();
-      });
+      const run = (e: Event) => { e.preventDefault(); e.stopPropagation(); safeAction(fn); };
+      b.addEventListener('pointerdown', run, { passive: false });
+      b.addEventListener('touchstart', run, { passive: false });
+      b.addEventListener('click', run);
       return b;
     };
 
@@ -65,94 +66,123 @@ export class TouchControls {
     const crouch = button('CROUCH', 'touch-crouch', () => undefined);
 
     const hold = (b: HTMLButtonElement, down: (on: boolean) => void) => {
-      const set = (on: boolean, e: PointerEvent) => {
-        e.preventDefault(); e.stopPropagation();
+      const set = (on: boolean, e?: Event) => {
+        e?.preventDefault(); e?.stopPropagation();
         down(on); b.classList.toggle('active', on);
       };
-      b.addEventListener('pointerdown', (e) => { b.setPointerCapture(e.pointerId); set(true, e); });
-      b.addEventListener('pointerup', (e) => set(false, e));
-      b.addEventListener('pointercancel', (e) => set(false, e));
-      b.addEventListener('lostpointercapture', () => { down(false); b.classList.remove('active'); });
+      b.addEventListener('pointerdown', (e) => { try { b.setPointerCapture(e.pointerId); } catch {} set(true, e); }, { passive: false });
+      b.addEventListener('pointerup', (e) => set(false, e), { passive: false });
+      b.addEventListener('pointercancel', (e) => set(false, e), { passive: false });
+      b.addEventListener('touchstart', (e) => set(true, e), { passive: false });
+      b.addEventListener('touchend', (e) => set(false, e), { passive: false });
+      b.addEventListener('touchcancel', (e) => set(false, e), { passive: false });
     };
     hold(sprint, (on) => this.player.setTouchSprint(on));
     hold(crouch, (on) => this.player.setTouchCrouch(on));
 
     this.root.append(this.lookPad, this.movePad, interact, jump, flash, glow, map, drop, sprint, crouch);
     this.bindMove();
-    this.bindLook(actions);
+    this.bindLook();
+  }
+
+  private updateMove(clientX: number, clientY: number): void {
+    const r = this.movePad.getBoundingClientRect();
+    const radius = Math.max(34, r.width * .34);
+    const dx = clientX - this.moveOrigin.x, dy = clientY - this.moveOrigin.y;
+    const d = Math.hypot(dx, dy), m = d > radius ? radius / d : 1;
+    const x = dx * m, y = dy * m;
+    this.knob.style.transform = `translate(${x}px,${y}px)`;
+    this.player.setTouchMove(x / radius, y / radius);
+  }
+
+  private endMove(): void {
+    this.moveId = -1;
+    this.touchMoveIdentifier = -1;
+    this.knob.style.transform = '';
+    this.player.setTouchMove(0, 0);
   }
 
   private bindMove(): void {
-    const update = (e: PointerEvent) => {
-      const r = this.movePad.getBoundingClientRect();
-      const radius = Math.max(34, r.width * .34);
-      const dx = e.clientX - this.moveOrigin.x, dy = e.clientY - this.moveOrigin.y;
-      const d = Math.hypot(dx, dy), m = d > radius ? radius / d : 1;
-      const x = dx * m, y = dy * m;
-      this.knob.style.transform = `translate(${x}px,${y}px)`;
-      this.player.setTouchMove(x / radius, y / radius);
-    };
-
     this.movePad.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       this.moveId = e.pointerId;
-      this.movePad.setPointerCapture(e.pointerId);
+      try { this.movePad.setPointerCapture(e.pointerId); } catch {}
       const r = this.movePad.getBoundingClientRect();
       this.moveOrigin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-      update(e);
-    });
-    this.movePad.addEventListener('pointermove', (e) => { if (e.pointerId === this.moveId) update(e); });
+      this.updateMove(e.clientX, e.clientY);
+    }, { passive: false });
+    this.movePad.addEventListener('pointermove', (e) => { if (e.pointerId === this.moveId) this.updateMove(e.clientX, e.clientY); }, { passive: false });
+    this.movePad.addEventListener('pointerup', (e) => { if (e.pointerId === this.moveId) this.endMove(); }, { passive: false });
+    this.movePad.addEventListener('pointercancel', () => this.endMove(), { passive: false });
 
-    const end = (e: PointerEvent) => {
-      if (e.pointerId !== this.moveId) return;
-      this.moveId = -1;
-      this.knob.style.transform = '';
-      this.player.setTouchMove(0, 0);
-    };
-    this.movePad.addEventListener('pointerup', end);
-    this.movePad.addEventListener('pointercancel', end);
+    // Safari touch fallback. Some iPad versions intermittently skip pointermove on complex overlays.
+    this.movePad.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const t = e.changedTouches[0]; if (!t) return;
+      this.touchMoveIdentifier = t.identifier;
+      const r = this.movePad.getBoundingClientRect();
+      this.moveOrigin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      this.updateMove(t.clientX, t.clientY);
+    }, { passive: false });
+    this.movePad.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const t = [...e.changedTouches].find((x) => x.identifier === this.touchMoveIdentifier); if (!t) return;
+      this.updateMove(t.clientX, t.clientY);
+    }, { passive: false });
+    this.movePad.addEventListener('touchend', (e) => {
+      if ([...e.changedTouches].some((x) => x.identifier === this.touchMoveIdentifier)) this.endMove();
+    }, { passive: false });
+    this.movePad.addEventListener('touchcancel', () => this.endMove(), { passive: false });
   }
 
-  private bindLook(actions: TouchActions): void {
+  private beginLook(id: number, x: number, y: number): void {
+    this.lookId = id;
+    this.lookLast = { x, y };
+    this.lookStart = { x, y };
+    this.lookMoved = false;
+  }
+
+  private moveLook(x: number, y: number): void {
+    const dx = x - this.lookLast.x, dy = y - this.lookLast.y;
+    this.lookLast = { x, y };
+    if (Math.hypot(x - this.lookStart.x, y - this.lookStart.y) > 8) this.lookMoved = true;
+    this.player.lookDelta(dx * 1.45, dy * 1.45);
+  }
+
+  private endLook(): void {
+    if (!this.lookMoved) this.actions.interact();
+    this.lookId = -1;
+    this.touchLookIdentifier = -1;
+    this.lookMoved = false;
+  }
+
+  private bindLook(): void {
     this.lookPad.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 && e.pointerType !== 'touch') return;
       e.preventDefault();
-      this.lookId = e.pointerId;
-      this.lookLast = { x: e.clientX, y: e.clientY };
-      this.lookTravel = 0;
-      this.lookDownAt = performance.now();
-      this.lookPad.setPointerCapture(e.pointerId);
-    });
-
+      this.beginLook(e.pointerId, e.clientX, e.clientY);
+      try { this.lookPad.setPointerCapture(e.pointerId); } catch {}
+    }, { passive: false });
     this.lookPad.addEventListener('pointermove', (e) => {
-      if (e.pointerId !== this.lookId) return;
+      if (e.pointerId === this.lookId) { e.preventDefault(); this.moveLook(e.clientX, e.clientY); }
+    }, { passive: false });
+    this.lookPad.addEventListener('pointerup', (e) => { if (e.pointerId === this.lookId) { e.preventDefault(); this.endLook(); } }, { passive: false });
+    this.lookPad.addEventListener('pointercancel', () => { this.lookId = -1; this.lookMoved = false; }, { passive: false });
+
+    this.lookPad.addEventListener('touchstart', (e) => {
       e.preventDefault();
-      const dx = e.clientX - this.lookLast.x, dy = e.clientY - this.lookLast.y;
-      this.lookLast = { x: e.clientX, y: e.clientY };
-      this.lookTravel += Math.hypot(dx, dy);
-
-      // Trackpad/mouse needs less gain than a finger; both work without Pointer Lock.
-      const gain = e.pointerType === 'mouse' ? 1.0 : 1.35;
-      this.player.lookDelta(dx * gain, dy * gain);
-    });
-
-    const end = (e: PointerEvent, cancelled = false) => {
-      if (e.pointerId !== this.lookId) return;
+      const t = e.changedTouches[0]; if (!t) return;
+      this.touchLookIdentifier = t.identifier;
+      this.beginLook(-2, t.clientX, t.clientY);
+    }, { passive: false });
+    this.lookPad.addEventListener('touchmove', (e) => {
       e.preventDefault();
-      const travel = this.lookTravel;
-      const held = performance.now() - this.lookDownAt;
-      this.lookId = -1;
-      this.lookTravel = 0;
-      this.lookDownAt = 0;
-
-      // A short, steady tap/click is the iPad equivalent of left click/E.
-      // Dragging is look-only so lifting the finger after turning never accidentally interacts.
-      if (!cancelled && travel < 9 && held < 650) actions.interact();
-    };
-
-    this.lookPad.addEventListener('pointerup', (e) => end(e));
-    this.lookPad.addEventListener('pointercancel', (e) => end(e, true));
-    this.lookPad.addEventListener('contextmenu', (e) => e.preventDefault());
+      const t = [...e.changedTouches].find((x) => x.identifier === this.touchLookIdentifier); if (!t) return;
+      this.moveLook(t.clientX, t.clientY);
+    }, { passive: false });
+    this.lookPad.addEventListener('touchend', (e) => {
+      if ([...e.changedTouches].some((x) => x.identifier === this.touchLookIdentifier)) { e.preventDefault(); this.endLook(); }
+    }, { passive: false });
+    this.lookPad.addEventListener('touchcancel', () => { this.touchLookIdentifier = -1; this.lookMoved = false; }, { passive: false });
   }
 
   dispose(): void {
