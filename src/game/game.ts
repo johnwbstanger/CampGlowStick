@@ -12,6 +12,7 @@ import { TouchControls } from '../ui/touchControls';
 import { Actor, RemotePlayer } from './avatars';
 import { CamperActor } from './campers';
 import { camperFoundLine, camperName } from './camperDialogue';
+import { buildCampDecor } from './campDecor';
 import { GLOW_NAMES, REACH } from './constants';
 import { makeGlowstick, makeLootHalo } from './glow';
 import { HostSim } from './hostsim';
@@ -81,7 +82,7 @@ export class Game {
     this.renderer.domElement.className = 'game';
     this.light = new Lighting(this.scene, this.renderer, this.camera);
     this.world = buildWorld(layout);
-    this.scene.add(this.world.group);
+    this.scene.add(this.world.group, buildCampDecor(layout));
     this.local = new LocalPlayer(this.camera, this.renderer.domElement, layout);
     this.campMap = new CampMap(layout);
     this.touch = new TouchControls(this.local, {
@@ -136,7 +137,6 @@ export class Game {
 
   private pointerDown = (e: PointerEvent): void => {
     if (e.button !== 0 || this.snap?.over || this.campMap.open) return;
-    // Touch is handled by the dedicated overlay and must never depend on Pointer Lock.
     if (e.pointerType === 'touch') return;
     if (document.pointerLockElement !== this.renderer.domElement) { void this.renderer.domElement.requestPointerLock?.(); return; }
     if (this.hasHeldItem()) this.mouseDownAt = performance.now(); else this.interact();
