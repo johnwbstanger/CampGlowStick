@@ -17,6 +17,7 @@ import { buildLayout, type Layout } from './layout';
 import { Lighting } from './lighting';
 import { falloff } from './noise';
 import { LocalPlayer } from './player';
+import { terrainHeight } from './terrain';
 import { buildWorld, type World } from './world';
 
 type StartMsg = Extract<Msg, { t: 'start' }>;
@@ -35,7 +36,7 @@ export const assetsFor = (layout: Layout, playerIds: number[]): AssetName[] => {
 export class Game {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(75, 1, 0.05, 320);
+  camera = new THREE.PerspectiveCamera(75, 1, 0.05, 420);
   light: Lighting;
   world: World;
   local: LocalPlayer;
@@ -58,6 +59,7 @@ export class Game {
   private overShown = false;
   private disposed = false;
   private timers: number[] = [];
+  private mouseDownAt = 0;
 
   static async create(root: HTMLElement, net: Session, start: StartMsg, progress: (d: number, t: number) => void): Promise<Game> {
     const layout = buildLayout(start.seed, start.need);
@@ -73,12 +75,12 @@ export class Game {
     this.light = new Lighting(this.scene, this.renderer, this.camera);
     this.world = buildWorld(layout);
     this.scene.add(this.world.group);
-    this.local = new LocalPlayer(this.camera, this.renderer.domElement);
+    this.local = new LocalPlayer(this.camera, this.renderer.domElement, layout);
     const sp = layout.spawns[net.myId % layout.spawns.length];
     this.local.teleport(sp[0], sp[1]);
     for (const p of net.players) if (p.id !== net.myId) this.remotes.set(p.id, new RemotePlayer(p.id, p.name, this.scene));
     this.monster = new Actor('monster');
-    this.monster.root.position.set(layout.monsterStart[0], 0, layout.monsterStart[1]);
+    this.monster.root.position.set(layout.monsterStart[0], terrainHeight(layout.monsterStart[0], layout.monsterStart[1], layout), layout.monsterStart[1]);
     this.monster.play('walk');
     this.scene.add(this.monster.root);
     const made = HostSim.makeDefs(layout);
@@ -87,12 +89,11 @@ export class Game {
     root.replaceChildren(this.renderer.domElement, this.hud.root);
     this.resize();
     addEventListener('resize', this.resize);
-    this.renderer.domElement.addEventListener('click', this.click);
+    this.renderer.domElement.addEventListener('pointerdown', this.pointerDown);
+    this.renderer.domElement.addEventListener('pointerup', this.pointerUp);
     addEventListener('keydown', this.key);
 
-    if (net.isHost) {
-      this.sim = new HostSim(net, layout, this.world.colliders, this.world.sizes, made.defs, made.spawnById);
-    }
+    if (net.isHost) this.sim = new HostSim(net, layout, this.world.colliders, this.world.sizes, made.defs, made.spawnById);
     this.timers.push(window.setInterval(() => this.netTick(), TICK_MS));
     this.exposeHooks();
     this.renderer.setAnimationLoop(() => this.frame());
@@ -104,23 +105,43 @@ export class Game {
     this.camera.updateProjectionMatrix();
   };
 
-  private click = (): void => {
+  private hasHeldItem(): boolean { return (this.snap?.players[this.net.myId]?.held ?? -1) >= 0; }
+
+  private interact = (quickThrow = true): void => {
     if (this.snap?.over) return;
-    if (document.pointerLockElement !== this.renderer.domElement) { void this.renderer.domElement.requestPointerLock?.(); return; }
-    this.act('throw');
+    if (this.hasHeldItem()) this.act('throw', quickThrow ? 0.28 : 0.5);
+    else this.act('pick');
+  };
+
+  private pointerDown = (e: PointerEvent): void => {
+    if (e.button !== 0 || this.snap?.over) return;
+    if (document.pointerLockElement !== this.renderer.domElement) {
+      void this.renderer.domElement.requestPointerLock?.();
+      return;
+    }
+    if (this.hasHeldItem()) this.mouseDownAt = performance.now();
+    else this.interact();
+  };
+
+  private pointerUp = (e: PointerEvent): void => {
+    if (e.button !== 0 || !this.mouseDownAt || this.snap?.over) return;
+    const heldMs = performance.now() - this.mouseDownAt;
+    this.mouseDownAt = 0;
+    const force = THREE.MathUtils.clamp((heldMs - 60) / 900, 0.2, 1);
+    this.act('throw', force);
   };
 
   private key = (e: KeyboardEvent): void => {
     if (e.repeat || this.snap?.over) return;
-    if (e.code === 'KeyE') this.act('pick');
+    if (e.code === 'KeyE') this.interact();
     else if (e.code === 'KeyR') this.act('drop');
     else if (e.code === 'KeyG') this.act('snap');
     else if (e.code === 'KeyN') this.act('night');
     else if (/^Digit[1-5]$/.test(e.code)) { this.glow = GLOW_NAMES[Number(e.code.slice(5)) - 1]; this.hud.toast(`Glowstick: ${this.glow}`); }
   };
 
-  act(a: 'pick' | 'drop' | 'throw' | 'snap' | 'night'): void {
-    this.net.sendToHost({ t: 'act', a, color: this.glow });
+  act(a: 'pick' | 'drop' | 'throw' | 'snap' | 'night', force?: number): void {
+    this.net.sendToHost({ t: 'act', a, color: this.glow, force });
     if (a === 'snap') playMaterial('glow', 5);
   }
 
@@ -155,7 +176,7 @@ export class Game {
     }
     for (const [id, v] of this.items) if (!seen.has(id)) { this.scene.remove(v.obj); this.items.delete(id); }
     const m = s.monster;
-    this.monsterTarget.set(m.p[0], 0, m.p[2]);
+    this.monsterTarget.set(m.p[0], terrainHeight(m.p[0], m.p[2], this.layout), m.p[2]);
     this.monster.root.rotation.y = m.yaw;
     if (m.mode === 'chase' && this.monsterMode !== 'chase') growl();
     this.monsterMode = m.mode;
@@ -173,7 +194,6 @@ export class Game {
     return { name: it.def.kind === 'glow' ? `${it.def.color} glowstick` : it.def.model, mass: it.def.kind === 'glow' ? 0.1 : propInfo(it.def.model).mass };
   }
 
-  /** 20 Hz: stream own state to the host; host also steps the authoritative sim and broadcasts. */
   private netTick(): void {
     const now = performance.now(), dt = Math.min(0.1, (now - this.tickLast) / 1000);
     this.tickLast = now;
@@ -198,12 +218,11 @@ export class Game {
       this.monster.play(this.monsterMode === 'idle' ? 'idle' : this.monsterMode === 'chase' ? 'sprint' : 'walk');
       this.monster.update(dt);
     }
-    this.voice?.update({ x: this.local.pos.x, y: 1.6, z: this.local.pos.z, yaw: this.local.yaw }, (id) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, y: 1.6, z: r.pos.z } : undefined; });
+    this.voice?.update({ x: this.local.pos.x, y: this.local.pos.y + 1.6, z: this.local.pos.z, yaw: this.local.yaw }, (id) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, y: r.pos.y + 1.6, z: r.pos.z } : undefined; });
     this.hud.update({ stamina: this.local.stamina, held: held.name, glow: this.glow, night: this.snap?.night ?? false, time: this.snap?.time ?? 0, collected: this.snap?.collected ?? 0, need: this.layout.need, names: this.net.players.map((p) => p.name), fps: this.fps });
     this.renderer.render(this.scene, this.camera);
   }
 
-  /** Smoke-test hooks (read-only state + a few helpers). */
   private exposeHooks(): void {
     window.__cg = {
       ready: true, myId: this.net.myId, isHost: this.net.isHost, need: this.layout.need,
@@ -211,9 +230,9 @@ export class Game {
       reach: REACH,
       teleport: (x: number, z: number) => this.local.teleport(x, z),
       look: (yaw: number) => { this.local.yaw = yaw; },
-      act: (a: 'pick' | 'drop' | 'throw' | 'snap' | 'night') => this.act(a),
+      act: (a: 'pick' | 'drop' | 'throw' | 'snap' | 'night', force?: number) => this.act(a, force),
       setGlow: (c: string) => { this.glow = c; },
-      local: () => ({ x: this.local.pos.x, z: this.local.pos.z, stamina: this.local.stamina }),
+      local: () => ({ x: this.local.pos.x, y: this.local.pos.y, z: this.local.pos.z, stamina: this.local.stamina }),
       remote: (id: number) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, z: r.pos.z, tx: r.target?.p[0], tz: r.target?.p[2] } : null; },
       remoteIds: () => [...this.remotes.keys()],
       glows: () => [...this.items.values()].filter((v) => v.def.kind === 'glow').map((v) => ({ id: v.def.id, color: v.def.color, x: v.target.x, y: v.target.y, z: v.target.z })),
@@ -224,7 +243,6 @@ export class Game {
     };
   }
 
-  /** Render, then count distinct colours on a sparse grid of the WebGL canvas (non-blank check). */
   private sample(): { distinct: number; lit: number } {
     this.renderer.render(this.scene, this.camera);
     const src = this.renderer.domElement, c = document.createElement('canvas');
@@ -245,7 +263,8 @@ export class Game {
     this.renderer.setAnimationLoop(null);
     removeEventListener('resize', this.resize);
     removeEventListener('keydown', this.key);
-    this.renderer.domElement.removeEventListener('click', this.click);
+    this.renderer.domElement.removeEventListener('pointerdown', this.pointerDown);
+    this.renderer.domElement.removeEventListener('pointerup', this.pointerUp);
     this.local.dispose();
     this.net.onHostMessage = undefined;
     delete window.__cg;
