@@ -53,7 +53,7 @@ export function buildLayout(seed: number, need = 3): Layout {
   add('campfire', 0, 6, 0);
   CABINS.forEach(([x, z]) => add('cabin', x, z, faceCentre(x, z)));
   add('shed', -8, -55, 0);
-  add('bus', 66, 24, Math.PI / 2);
+  add('bus', 31, 2, Math.PI / 2);
   add('tent', -8, 21, 0.6); add('tent', 10, 20, -0.5); add('tent', -9, -19, 0.25); add('tent', 9, -18, -0.2);
   add('canoe', 58, 3, 0.4); add('logs', 4, 10, 0.8); add('logs', -5, 2, 2.1);
   add('rock', -54, -4, 1); add('rock', 52, 33, 2); add('boulder', 8, 55, 0.2);
@@ -72,7 +72,7 @@ export function buildLayout(seed: number, need = 3): Layout {
     const x = (rng() * 2 - 1) * (WORLD_HALF - 4), z = (rng() * 2 - 1) * (WORLD_HALF - 4);
     if (keepOut.some(([kx, kz]) => Math.hypot(kx - x, kz - z) < 6)) continue;
     if (nearRoad(x, z) || inClearing(x, z)) continue;
-    if (Math.hypot(x - 66, z - 24) < 10) continue;
+    if (Math.hypot(x - 31, z - 2) < 10) continue;
     trees.push({ name: kinds[Math.floor(rng() * kinds.length)], x, z, rot: rng() * Math.PI * 2, solid: true });
   }
 
@@ -99,6 +99,6 @@ export function buildLayout(seed: number, need = 3): Layout {
   zone(56, 4, 10, 8, ['paddle', 'bucket', 'bottle', 'crate', 'cooler', 'backpack'], 12);
   zone(-8, 20, 9, 7, campPool, 10); zone(8, -19, 9, 7, campPool, 10);
 
-  const spawns: [number, number][] = Array.from({ length: 8 }, (_, i) => [56 + Math.cos((i / 8) * Math.PI * 2) * 4, 22 + Math.sin((i / 8) * Math.PI * 2) * 2]);
-  return { statics, trees, decals, items, spawns, roads, clearings, extraction: { x: 66, z: 24, r: 5 }, monsterStart: [-68, -58], need };
+  const spawns: [number, number][] = Array.from({ length: 8 }, (_, i) => [22 + Math.cos((i / 8) * Math.PI * 2) * 4, 5 + Math.sin((i / 8) * Math.PI * 2) * 2]);
+  return { statics, trees, decals, items, spawns, roads, clearings, extraction: { x: 28, z: 2, r: 5 }, monsterStart: [-68, -58], need };
 }
