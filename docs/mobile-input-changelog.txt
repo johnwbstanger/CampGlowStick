@@ -1,0 +1,1 @@
+Changes in this follow-up: robust iPad touch fallback, forced touch UI visibility on touch-capable devices, trackpad/finger drag-look, tap/click interact, movement stick fixes, and navigation test compatibility.
