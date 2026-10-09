@@ -14,7 +14,6 @@ interface SimItem { def: ItemDef; body: CANNON.Body; mass: number; holder: numbe
 interface SimCamper { id: number; x: number; y: number; z: number; foundBy: number; rescued: boolean }
 export interface Sizes { get(model: string): { x: number; y: number; z: number } | undefined }
 
-const MAX_GLOW = 60;
 const CAMPER_NEED = 7;
 const CAMPER_HIDES: [number, number][] = [
   [-78, -43], [-42, -58], [19, -55], [65, -39], [-67, 21], [-20, 32], [42, 28],
@@ -166,7 +165,7 @@ export class HostSim {
   }
 
   private snap(id: number, pl: SimPlayer, color: string): void {
-    if ([...this.items.values()].filter((i) => i.def.kind === 'glow').length >= MAX_GLOW) return;
+    // Unlimited supply: snapping is never blocked by a per-session inventory cap.
     const def: ItemDef = { id: this.nextId++, model: 'glowstick', kind: 'glow', color, mat: 'glow' };
     const [fx, fz] = this.forward(pl); const it = this.addItem(def, pl.state.p[0] + fx * 0.6, pl.state.p[1] + 1.2, pl.state.p[2] + fz * 0.6);
     this.net.broadcast({ t: 'spawn', def }); this.noise(pl.state.p[0], pl.state.p[2], 1, 'glow', 'glow'); if (pl.state.held < 0) this.hold(id, pl, it);
@@ -190,7 +189,6 @@ export class HostSim {
       if (d > 0.15) {
         const s = Math.min(d, 4.2 * dt);
         const tryPos = { x: c.x + dx / d * s, y: terrainHeight(c.x, c.z, this.layout), z: c.z + dz / d * s };
-        // Child-sized obstacle resolution stops rescued campers walking straight through cabin walls.
         resolveCapsule(tryPos, 0.24, 1.15, this.colliders, WORLD_HALF);
         c.x = tryPos.x; c.z = tryPos.z;
       }
