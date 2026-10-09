@@ -10,9 +10,7 @@ const palettes = [
   { shirt: 0x7a9a54, shorts: 0xb86636, skin: 0x9c684f, hair: 0x1e1917, accent: 0xf3d56f },
 ];
 
-function mat(color: number) {
-  return new THREE.MeshStandardMaterial({ color, roughness: 0.94, metalness: 0, flatShading: false });
-}
+function mat(color: number) { return new THREE.MeshStandardMaterial({ color, roughness: 0.94, metalness: 0, flatShading: false }); }
 function add(parent: THREE.Object3D, geo: THREE.BufferGeometry, color: number, x = 0, y = 0, z = 0) {
   const m = new THREE.Mesh(geo, mat(color));
   m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; parent.add(m); return m;
@@ -20,6 +18,7 @@ function add(parent: THREE.Object3D, geo: THREE.BufferGeometry, color: number, x
 
 export class CamperActor {
   root = new THREE.Group();
+  private body = new THREE.Group();
   private leftLeg = new THREE.Group();
   private rightLeg = new THREE.Group();
   private leftArm = new THREE.Group();
@@ -28,19 +27,18 @@ export class CamperActor {
 
   constructor(public id: number) {
     const p = palettes[id % palettes.length];
-    const body = new THREE.Group();
-    body.position.y = 0.72;
-    this.root.add(body);
+    this.body.position.y = 0.72;
+    this.root.add(this.body);
 
-    const torso = add(body, new THREE.CapsuleGeometry(0.19, 0.33, 6, 14), p.shirt, 0, 0.26, 0);
+    const torso = add(this.body, new THREE.CapsuleGeometry(0.19, 0.33, 6, 14), p.shirt, 0, 0.26, 0);
     torso.scale.z = 0.72;
-    add(body, new THREE.CylinderGeometry(0.19, 0.17, 0.11, 14), p.shorts, 0, 0.02, 0).scale.z = 0.72;
+    add(this.body, new THREE.CylinderGeometry(0.19, 0.17, 0.11, 14), p.shorts, 0, 0.02, 0).scale.z = 0.72;
 
-    const scarf = add(body, new THREE.TorusGeometry(0.09, 0.018, 6, 16), p.accent, 0, 0.49, 0.02);
+    const scarf = add(this.body, new THREE.TorusGeometry(0.09, 0.018, 6, 16), p.accent, 0, 0.49, 0.02);
     scarf.rotation.x = Math.PI / 2;
 
     const mkArm = (side: number, group: THREE.Group) => {
-      group.position.set(side * 0.215, 0.43, 0); body.add(group);
+      group.position.set(side * 0.215, 0.43, 0); this.body.add(group);
       add(group, new THREE.CapsuleGeometry(0.043, 0.19, 5, 10), p.shirt, 0, -0.12, 0);
       add(group, new THREE.CapsuleGeometry(0.037, 0.17, 5, 10), p.skin, 0, -0.32, 0);
       add(group, new THREE.SphereGeometry(0.053, 10, 8), p.skin, 0, -0.46, 0);
@@ -56,7 +54,7 @@ export class CamperActor {
     };
     mkLeg(1, this.leftLeg); mkLeg(-1, this.rightLeg);
 
-    const head = new THREE.Group(); head.position.set(0, 0.71, 0); body.add(head);
+    const head = new THREE.Group(); head.position.set(0, 0.71, 0); this.body.add(head);
     const face = add(head, new THREE.SphereGeometry(0.18, 18, 12), p.skin);
     face.scale.set(0.9, 1.02, 0.86);
     const hair = add(head, new THREE.SphereGeometry(0.188, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), p.hair, 0, 0.055, -0.005);
@@ -69,10 +67,25 @@ export class CamperActor {
     this.root.name = `camper-${id}`;
   }
 
-  update(dt: number, moving: boolean, scared = false): void {
+  update(dt: number, moving: boolean, scared = false, hiding = false): void {
     this.t += dt;
     const phase = Math.sin(this.t * (moving ? 7 : 2));
     const a = moving ? 0.55 : 0.025;
+    if (hiding) {
+      // Compact "found hiding behind boxes/coolers" silhouette: knees tucked, shoulders low, arms protecting head.
+      this.body.position.y += (0.42 - this.body.position.y) * Math.min(1, dt * 10);
+      this.body.rotation.x += (0.34 - this.body.rotation.x) * Math.min(1, dt * 10);
+      this.leftLeg.rotation.x += (-1.02 - this.leftLeg.rotation.x) * Math.min(1, dt * 12);
+      this.rightLeg.rotation.x += (-1.02 - this.rightLeg.rotation.x) * Math.min(1, dt * 12);
+      this.leftArm.rotation.x += (-1.15 - this.leftArm.rotation.x) * Math.min(1, dt * 12);
+      this.rightArm.rotation.x += (-1.15 - this.rightArm.rotation.x) * Math.min(1, dt * 12);
+      this.leftArm.rotation.z = -0.48; this.rightArm.rotation.z = 0.48;
+      this.root.rotation.z = Math.sin(this.t * 3.2) * 0.018;
+      return;
+    }
+    this.body.position.y += (0.72 - this.body.position.y) * Math.min(1, dt * 10);
+    this.body.rotation.x += (0 - this.body.rotation.x) * Math.min(1, dt * 10);
+    this.leftArm.rotation.z *= Math.max(0, 1 - dt * 12); this.rightArm.rotation.z *= Math.max(0, 1 - dt * 12);
     this.leftLeg.rotation.x = phase * a; this.rightLeg.rotation.x = -phase * a;
     this.leftArm.rotation.x = -phase * a * 0.75; this.rightArm.rotation.x = phase * a * 0.75;
     this.root.rotation.z = scared ? Math.sin(this.t * 10) * 0.025 : 0;
