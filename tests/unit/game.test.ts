@@ -31,15 +31,36 @@ describe('noise + monster', () => {
     bus.prune(100);
     expect(bus.events.length).toBe(0);
   });
-  it('investigates the loudest noise and catches prey', () => {
+
+  it('investigates the loudest noise and catches visible prey', () => {
     const bus = new NoiseBus(), m = newMonster(0, 0);
-    bus.emit({ x: 0, z: 8, vol: 8, mat: 'metal', t: 0 });
+    bus.emit({ x: 0, z: 8, vol: 8, mat: 'metal', t: 0, source: 'impact' });
     for (let i = 0; i < 5; i++) stepMonster(m, 0.1, i * 0.1, bus, [], true);
     expect(m.mode).toBe('investigate');
     expect(m.z).toBeGreaterThan(0);
     const caught = stepMonster(m, 0.1, 2, bus, [{ id: 3, x: m.x, z: m.z + MONSTER.catchDist / 2, crouch: false, alive: true }], true);
     expect(caught).toBe(3);
     expect(stepMonster(newMonster(0, 0), 0.1, 0, bus, [], false)).toBeNull();
+  });
+
+  it('redirects search toward a thrown object impact when no player is visible', () => {
+    const bus = new NoiseBus(), m = newMonster(0, 0);
+    m.mode = 'search'; m.tx = 0; m.tz = 4; m.timer = 3;
+    // Ordinary footsteps are louder at the source, but the deliberate thrown impact is the intended decoy.
+    bus.emit({ x: 1, z: 1, vol: 5, mat: 'step', t: 0, source: 'step' });
+    bus.emit({ x: 9, z: -2, vol: 6, mat: 'can', t: 0, source: 'thrown-impact' });
+    stepMonster(m, 0.1, 0.1, bus, [{ id: 1, x: 30, z: 30, crouch: false, alive: true }], true);
+    expect(m.mode).toBe('investigate');
+    expect(m.tx).toBe(9);
+    expect(m.tz).toBe(-2);
+  });
+
+  it('visible prey still overrides a thrown-object distraction', () => {
+    const bus = new NoiseBus(), m = newMonster(0, 0);
+    bus.emit({ x: -8, z: 0, vol: 8, mat: 'metal', t: 0, source: 'thrown-impact' });
+    stepMonster(m, 0.1, 0.1, bus, [{ id: 2, x: 0, z: 4, crouch: false, alive: true }], true);
+    expect(m.mode).toBe('chase');
+    expect(m.tz).toBe(4);
   });
 });
 
