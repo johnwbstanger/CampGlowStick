@@ -1,0 +1,1 @@
+Real-device validation is still required after deploy because CI cannot reproduce every iPadOS Safari + Magic Keyboard pointer mode.

@@ -8,14 +8,12 @@ const key = (x: number, z: number) => `${x},${z}`;
 function blocked(x: number, z: number, colliders: Box[], radius: number): boolean {
   if (Math.abs(x) > WORLD_HALF - radius || Math.abs(z) > WORLD_HALF - radius) return true;
   for (const b of colliders) {
-    // Ignore low decorative/floor geometry. Navigation only cares about things that block a body.
     if (b.maxY < 0.65) continue;
     if (x >= b.minX - radius && x <= b.maxX + radius && z >= b.minZ - radius && z <= b.maxZ + radius) return true;
   }
   return false;
 }
 
-/** Segment visibility in X/Z against expanded solid boxes. */
 export function navLineClear(a: NavPoint, b: NavPoint, colliders: Box[], radius: number): boolean {
   const dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
   const steps = Math.max(1, Math.ceil(d / 0.8));
@@ -26,11 +24,6 @@ export function navLineClear(a: NavPoint, b: NavPoint, colliders: Box[], radius:
   return true;
 }
 
-/**
- * Small deterministic A* grid used by the monster and following campers.
- * Cell size 3m gives enough detail for cabin doors without building a heavyweight navmesh library.
- * Returns a simplified list of world-space waypoints. Empty means direct/failed route.
- */
 export function findRoute(start: NavPoint, goal: NavPoint, colliders: Box[], radius: number, cell = 3): NavPoint[] {
   if (navLineClear(start, goal, colliders, radius)) return [goal];
 
@@ -62,7 +55,6 @@ export function findRoute(start: NavPoint, goal: NavPoint, colliders: Box[], rad
       if (nx < minC || nx > maxC || nz < minC || nz > maxC) continue;
       const wx = nx * cell, wz = nz * cell;
       if (blocked(wx, wz, colliders, radius)) continue;
-      // Don't allow diagonal corner cutting.
       if (ox && oz && (blocked((cur.x + ox) * cell, cur.z * cell, colliders, radius) || blocked(cur.x * cell, (cur.z + oz) * cell, colliders, radius))) continue;
       const nk = key(nx, nz), tentative = (gScore.get(ck) ?? Infinity) + cost;
       if (tentative >= (gScore.get(nk) ?? Infinity)) continue;
@@ -82,7 +74,6 @@ export function findRoute(start: NavPoint, goal: NavPoint, colliders: Box[], rad
   const raw: NavPoint[] = cells.map(([x, z]) => ({ x: x * cell, z: z * cell }));
   raw.push(goal);
 
-  // String-pull the grid route so movement looks organic rather than marching cell-by-cell.
   const out: NavPoint[] = [];
   let anchor: NavPoint = start, i = 0;
   while (i < raw.length) {
@@ -93,4 +84,9 @@ export function findRoute(start: NavPoint, goal: NavPoint, colliders: Box[], rad
     out.push(raw[far]); anchor = raw[far]; i = far + 1;
   }
   return out;
+}
+
+/** Backward-compatible numeric wrapper used by older tests/tools. */
+export function findPath(sx: number, sz: number, gx: number, gz: number, colliders: Box[], radius: number, cell = 3): NavPoint[] {
+  return findRoute({ x: sx, z: sz }, { x: gx, z: gz }, colliders, radius, cell);
 }

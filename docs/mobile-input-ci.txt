@@ -1,0 +1,1 @@
+This branch should be merged only after build/unit/smoke checks pass.
