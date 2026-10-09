@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { getAnimations, getModel } from '../assets/loader';
 import type { AssetName } from '../assets/manifest';
 import { CounselorActor } from './counselors';
+import { CreatureActor } from './creature';
 import { damp, lerpAngle } from './interp';
 import type { PlayerState } from '../net/protocol';
 
@@ -17,13 +18,22 @@ function nameTag(text: string): THREE.Sprite {
   return s;
 }
 
-/** Animated imported model used for the creature. */
+/** Animated actor. The monster uses the purpose-built gaunt creature instead of the old goofy zombie asset. */
 export class Actor {
   root = new THREE.Group();
-  private mixer: THREE.AnimationMixer;
+  private mixer?: THREE.AnimationMixer;
   private actions = new Map<string, THREE.AnimationAction>();
   private current = '';
+  private creature?: CreatureActor;
+
   constructor(model: AssetName, scale = 1) {
+    if (model === 'monster') {
+      this.creature = new CreatureActor();
+      this.root = this.creature.root;
+      this.root.scale.multiplyScalar(scale);
+      this.creature.play('idle');
+      return;
+    }
     const m = getModel(model);
     this.root.add(m);
     this.root.scale.setScalar(scale);
@@ -31,7 +41,9 @@ export class Actor {
     for (const clip of getAnimations(model)) this.actions.set(clip.name, this.mixer.clipAction(clip));
     this.play('idle');
   }
+
   play(name: string): void {
+    if (this.creature) { this.creature.play(name); this.current = name; return; }
     if (name === this.current) return;
     const next = this.actions.get(name) ?? this.actions.get('idle');
     if (!next) return;
@@ -40,7 +52,7 @@ export class Actor {
     if (prev && prev !== next) prev.crossFadeTo(next, 0.2, false);
     this.current = name;
   }
-  update(dt: number): void { this.mixer.update(dt); }
+  update(dt: number): void { if (this.creature) this.creature.update(dt); else this.mixer?.update(dt); }
 }
 
 export class RemotePlayer {
