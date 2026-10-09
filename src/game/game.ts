@@ -15,6 +15,7 @@ import { camperFoundLine, camperName } from './camperDialogue';
 import { buildCampDecor } from './campDecor';
 import { GLOW_NAMES, REACH } from './constants';
 import { makeGlowstick, makeLootHalo } from './glow';
+import { makeDirectorGun } from './gun';
 import { HostSim } from './hostsim';
 import { damp } from './interp';
 import { propInfo } from './items';
@@ -122,16 +123,15 @@ export class Game {
     this.camera.aspect = innerWidth / innerHeight;
     this.camera.updateProjectionMatrix();
   };
+  private toggleMap(): void { const open = this.campMap.toggle(); if (open) document.exitPointerLock?.(); }
+  private heldView(): ItemView | undefined { const id = this.snap?.players[this.net.myId]?.held ?? -1; return this.items.get(id); }
+  private hasHeldItem(): boolean { return !!this.heldView(); }
+  private hasGun(): boolean { return this.heldView()?.def.model === 'directorGun'; }
 
-  private toggleMap(): void {
-    const open = this.campMap.toggle();
-    if (open) document.exitPointerLock?.();
-  }
-
-  private hasHeldItem(): boolean { return (this.snap?.players[this.net.myId]?.held ?? -1) >= 0; }
   private interact = (quickThrow = true): void => {
     if (this.snap?.over || this.campMap.open) return;
-    if (this.hasHeldItem()) this.act('throw', quickThrow ? 0.28 : 0.5);
+    if (this.hasGun()) this.act('fire');
+    else if (this.hasHeldItem()) this.act('throw', quickThrow ? 0.28 : 0.5);
     else this.act('pick');
   };
 
@@ -139,6 +139,7 @@ export class Game {
     if (e.button !== 0 || this.snap?.over || this.campMap.open) return;
     if (e.pointerType === 'touch') return;
     if (document.pointerLockElement !== this.renderer.domElement) { void this.renderer.domElement.requestPointerLock?.(); return; }
+    if (this.hasGun()) { this.act('fire'); return; }
     if (this.hasHeldItem()) this.mouseDownAt = performance.now(); else this.interact();
   };
   private pointerUp = (e: PointerEvent): void => {
@@ -159,23 +160,21 @@ export class Game {
     else if (/^Digit[1-5]$/.test(e.code)) { this.glow = GLOW_NAMES[Number(e.code.slice(5)) - 1]; this.hud.toast(`Glowstick: ${this.glow}`); }
   };
 
-  act(a: 'pick' | 'drop' | 'throw' | 'snap' | 'night', force?: number): void {
+  act(a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire', force?: number): void {
     this.net.sendToHost({ t: 'act', a, color: this.glow, force });
     if (a === 'snap') playMaterial('glow', 5);
+    if (a === 'fire') { playMaterial('metal', 8); this.hud.toast('BANG! The shot will draw attention.'); }
   }
 
   private addItemView(def: ItemDef): void {
     if (this.items.has(def.id)) return;
-    const obj = def.kind === 'glow' ? makeGlowstick(def.color ?? 'green') : getModel(def.model as AssetName);
+    const obj = def.kind === 'glow' ? makeGlowstick(def.color ?? 'green') : def.model === 'directorGun' ? makeDirectorGun() : getModel(def.model as AssetName);
     if (def.kind === 'loot') obj.add(makeLootHalo());
     this.scene.add(obj);
     this.items.set(def.id, { def, obj, target: new THREE.Vector3(), q: new THREE.Quaternion(), init: false });
   }
 
-  handle(msg: Msg): void {
-    if (msg.t === 'spawn') this.addItemView(msg.def);
-    else if (msg.t === 's') this.applySnap(msg);
-  }
+  handle(msg: Msg): void { if (msg.t === 'spawn') this.addItemView(msg.def); else if (msg.t === 's') this.applySnap(msg); }
 
   private applySnap(s: GameSnap): void {
     this.snap = s;
@@ -185,7 +184,6 @@ export class Game {
       if (r) { r.target = st; r.alive = st.alive; }
       else if (Number(id) === this.net.myId && !st.alive) this.local.alive = false;
     }
-
     const seen = new Set<number>();
     for (const [id, x, y, z, qx, qy, qz, qw] of s.items) {
       seen.add(id); const v = this.items.get(id); if (!v) continue;
@@ -216,8 +214,9 @@ export class Game {
   }
 
   private held(): { name: string; mass: number } {
-    const id = this.snap?.players[this.net.myId]?.held ?? -1; const it = this.items.get(id);
+    const it = this.heldView();
     if (!it) return { name: '', mass: 0 };
+    if (it.def.model === 'directorGun') return { name: `director's emergency gun`, mass: 2.2 };
     return { name: it.def.kind === 'glow' ? `${it.def.color} glowstick` : it.def.model, mass: it.def.kind === 'glow' ? 0.1 : propInfo(it.def.model).mass };
   }
 
@@ -229,10 +228,10 @@ export class Game {
 
   private contextPrompt(heldName: string): string {
     if (this.campMap.open) return '';
+    if (this.hasGun()) return `DIRECTOR'S GUN · Click / USE to fire · R to drop`;
     if (heldName) return `Holding ${heldName} · release click to throw · R to place`;
     const ex = this.layout.extraction;
     if (Math.hypot(this.local.pos.x - ex.x, this.local.pos.z - ex.z) < ex.r + 2) return 'BUS SAFE ZONE · board through the side door';
-
     let best = REACH + .7, text = '';
     for (const c of this.snap?.campers ?? []) {
       if (c.rescued || c.foundBy >= 0) continue;
@@ -241,7 +240,9 @@ export class Game {
     }
     for (const v of this.items.values()) {
       const f = this.facingScore(v.target.x, v.target.z);
-      if (f.d < best && (f.d < 1 || f.facing > .48)) { best = f.d; text = `Click / E — pick up ${v.def.kind === 'glow' ? 'glowstick' : v.def.model}`; }
+      if (f.d < best && (f.d < 1 || f.facing > .48)) {
+        best = f.d; text = `Click / E — pick up ${v.def.model === 'directorGun' ? `director's emergency gun` : v.def.kind === 'glow' ? 'glowstick' : v.def.model}`;
+      }
     }
     return text;
   }
@@ -263,12 +264,12 @@ export class Game {
       const moving = v.target.distanceToSquared(v.lastTarget) > 0.0025;
       v.actor.root.position.lerp(v.target, damp(12, dt));
       if (moving) v.actor.root.rotation.y = Math.atan2(v.target.x - v.lastTarget.x, v.target.z - v.lastTarget.z) + Math.PI;
-      const hiding = v.foundBy < 0 && !v.rescued;
-      v.actor.update(dt, moving, this.monsterMode === 'chase', hiding);
+      v.actor.update(dt, moving, this.monsterMode === 'chase', v.foundBy < 0 && !v.rescued);
     }
     if (!this.snap?.over) {
       this.monster.root.position.lerp(this.monsterTarget, damp(8, dt));
-      this.monster.play(this.monsterMode === 'idle' ? 'idle' : this.monsterMode === 'chase' ? 'sprint' : 'walk'); this.monster.update(dt);
+      this.monster.play(this.monsterMode === 'idle' || this.monsterMode === 'stunned' ? 'idle' : this.monsterMode === 'chase' ? 'sprint' : 'walk'); this.monster.update(dt);
+      this.monster.root.rotation.z = this.monsterMode === 'stunned' ? Math.sin(now * .02) * .08 : 0;
     }
     this.voice?.update({ x: this.local.pos.x, y: this.local.pos.y + 1.6, z: this.local.pos.z, yaw: this.local.yaw }, (id) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, y: r.pos.y + 1.6, z: r.pos.z } : undefined; });
     const mapPlayers = [...this.remotes.values()].filter((r) => r.alive).map((r) => ({ x: r.pos.x, z: r.pos.z, name: r.name }));
@@ -281,7 +282,7 @@ export class Game {
     window.__cg = {
       ready: true, myId: this.net.myId, isHost: this.net.isHost, need: this.layout.need, frames: () => this.frames, reach: REACH,
       teleport: (x: number, z: number) => this.local.teleport(x, z), look: (yaw: number) => { this.local.yaw = yaw; },
-      act: (a: 'pick' | 'drop' | 'throw' | 'snap' | 'night', force?: number) => this.act(a, force), setGlow: (c: string) => { this.glow = c; },
+      act: (a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire', force?: number) => this.act(a, force), setGlow: (c: string) => { this.glow = c; },
       local: () => ({ x: this.local.pos.x, y: this.local.pos.y, z: this.local.pos.z, stamina: this.local.stamina }),
       remote: (id: number) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, z: r.pos.z, tx: r.target?.p[0], tz: r.target?.p[2] } : null; }, remoteIds: () => [...this.remotes.keys()],
       campers: () => this.snap?.campers ?? [],
