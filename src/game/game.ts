@@ -193,9 +193,11 @@ export class Game {
     const k = damp(20, dt);
     for (const v of this.items.values()) { v.obj.position.lerp(v.target, k); v.obj.quaternion.slerp(v.q, k); }
     for (const r of this.remotes.values()) r.update(dt);
-    this.monster.root.position.lerp(this.monsterTarget, damp(8, dt));
-    this.monster.play(this.monsterMode === 'idle' ? 'idle' : this.monsterMode === 'chase' ? 'sprint' : 'walk');
-    this.monster.update(dt);
+    if (!this.snap?.over) {
+      this.monster.root.position.lerp(this.monsterTarget, damp(8, dt));
+      this.monster.play(this.monsterMode === 'idle' ? 'idle' : this.monsterMode === 'chase' ? 'sprint' : 'walk');
+      this.monster.update(dt);
+    }
     this.voice?.update({ x: this.local.pos.x, y: 1.6, z: this.local.pos.z, yaw: this.local.yaw }, (id) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, y: 1.6, z: r.pos.z } : undefined; });
     this.hud.update({ stamina: this.local.stamina, held: held.name, glow: this.glow, night: this.snap?.night ?? false, time: this.snap?.time ?? 0, collected: this.snap?.collected ?? 0, need: this.layout.need, names: this.net.players.map((p) => p.name), fps: this.fps });
     this.renderer.render(this.scene, this.camera);
@@ -243,6 +245,10 @@ export class Game {
     this.renderer.setAnimationLoop(null);
     removeEventListener('resize', this.resize);
     removeEventListener('keydown', this.key);
+    this.renderer.domElement.removeEventListener('click', this.click);
+    this.local.dispose();
+    this.net.onHostMessage = undefined;
+    delete window.__cg;
     document.exitPointerLock?.();
     this.renderer.dispose();
   }

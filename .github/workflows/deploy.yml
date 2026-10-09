@@ -1,3 +1,5 @@
+# NOTE: deploying requires Settings -> Pages -> Build and deployment -> Source = "GitHub Actions".
+# If the repo still uses "Deploy from a branch" (legacy "pages build and deployment"), the deploy job will fail.
 name: Build, test and deploy
 
 on:
@@ -22,6 +24,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: actions/configure-pages@v5
       - run: npm ci
       - run: npm run build
         env:

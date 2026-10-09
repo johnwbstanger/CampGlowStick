@@ -8,25 +8,33 @@ export class Hud {
   private tl = h('div', { cls: 'tl', id: 'hud-objective' });
   private tr = h('div', { cls: 'tr', id: 'hud-players' });
   private bar = h('i');
-  private info = h('div', { id: 'hud-held' });
+  private objective = h('div', {});
+  private heldText = h('span', {});
+  private swatch = h('span', { cls: 'swatch' });
+  private glowText = h('span', {});
+  private info = h('div', { id: 'hud-held' }, this.heldText, this.swatch, this.glowText);
   private toastEl = h('div', { cls: 'toast', id: 'hud-toast' });
   private result?: HTMLElement;
   private toastTimer = 0;
 
   constructor() {
+    this.tl.append(this.objective,
+      h('div', {}, 'WASD move · Shift sprint · C crouch · E pick up/drop · Click throw'),
+      h('div', {}, 'G snap glowstick · 1-5 colour · F flashlight · N day/night (host)'));
     this.root.append(this.tl, this.tr, h('div', { cls: 'cross' }), this.toastEl,
       h('div', { cls: 'bl' }, this.info, h('div', { cls: 'stam' }, this.bar)));
   }
 
+  private setText(el: HTMLElement, text: string): void { if (el.textContent !== text) el.textContent = text; }
+
   update(d: HudData): void {
-    this.tl.innerHTML = '';
-    this.tl.append(h('div', {}, `${d.night ? 'NIGHT' : 'DAY'} · loot ${d.collected}/${d.need} → bring it to the bus`),
-      h('div', {}, 'WASD move · Shift sprint · C crouch · E pick up/drop · Click throw'),
-      h('div', {}, 'G snap glowstick · 1-5 colour · F flashlight · N day/night (host)'));
-    this.tr.textContent = `Campers: ${d.names.join(', ')} · ${d.fps} fps`;
+    this.setText(this.objective, `${d.night ? 'NIGHT' : 'DAY'} · loot ${d.collected}/${d.need} → bring it to the bus`);
+    this.setText(this.tr, `Campers: ${d.names.join(', ')} · ${d.fps} fps`);
     this.bar.style.width = `${d.stamina}%`;
-    this.info.innerHTML = '';
-    this.info.append(`Holding: ${d.held || 'nothing'}  `, h('span', { cls: 'swatch', style: `background:${GLOW_COLORS[d.glow]}` }), ` ${d.glow}`);
+    this.setText(this.heldText, `Holding: ${d.held || 'nothing'}  `);
+    this.setText(this.glowText, ` ${d.glow}`);
+    const bg = `background:${GLOW_COLORS[d.glow]}`;
+    if (this.swatch.getAttribute('style') !== bg) this.swatch.setAttribute('style', bg);
   }
 
   toast(text: string): void {

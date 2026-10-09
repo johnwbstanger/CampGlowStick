@@ -94,20 +94,21 @@ export class Session {
     return new Promise((resolve, reject) => {
       const conn = this.peer.connect(peerIdFor(code), { reliable: true, serialization: 'json' });
       let settled = false;
-      const fail = (k: NetErrorKind) => { if (!settled) { settled = true; clearTimeout(timer); conn.close(); reject(new NetError(k)); } };
+      const fail = (k: NetErrorKind) => { if (!settled) { settled = true; clearTimeout(timer); this.peer.off('error', onPeerError); conn.close(); reject(new NetError(k)); } };
       const timer = setTimeout(() => fail('timeout'), CONNECT_TIMEOUT);
-      this.peer.on('error', (err) => {
+      const onPeerError = (err: { type: string }) => {
         if (settled) return;
         if (err.type === 'peer-unavailable') fail('notfound');
         else if (SIGNALING_ERRORS.has(err.type)) fail('signaling');
-      });
+      };
+      this.peer.on('error', onPeerError);
       conn.on('open', () => conn.send({ t: 'hello', name, v: PROTOCOL } satisfies Msg));
       conn.on('error', () => fail('timeout'));
       conn.on('close', () => { if (!settled) fail('timeout'); else this.hostGone(); });
       conn.on('data', (raw) => {
         const msg = raw as Msg;
         if (!settled && msg.t === 'welcome') {
-          settled = true; clearTimeout(timer);
+          settled = true; clearTimeout(timer); this.peer.off('error', onPeerError);
           this.myId = msg.id; this.max = msg.max; this.hostConn = conn;
           resolve();
         } else if (!settled && msg.t === 'reject') fail(msg.reason);

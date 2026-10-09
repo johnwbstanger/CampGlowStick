@@ -78,3 +78,8 @@ Env: `PEER_HOST`, `PEER_PORT`, `PEER_PATH`, `PEER_SECURE` point it at another se
 ## Deploy
 `.github/workflows/deploy.yml` builds, runs unit + smoke tests and publishes `dist` to GitHub Pages (enable
 Settings → Pages → Source: GitHub Actions). Vite `base` is `/CampGlowStick/` (override with `VITE_BASE`).
+
+## Deploying to GitHub Pages
+The `Build, test and deploy` workflow publishes with `actions/deploy-pages`, so the repo must be set to
+**Settings → Pages → Build and deployment → Source = GitHub Actions** (not "Deploy from a branch"). This is a repository
+setting and cannot be changed from the workflow; if it is wrong, `actions/configure-pages` fails the build with a clear message.
