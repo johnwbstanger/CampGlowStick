@@ -8,4 +8,4 @@ export const PROPS: Partial<Record<AssetName, PropInfo>> = {
   axe: { mass: 2, mat: 'metal' }, radio: { mass: 1, mat: 'plastic' }, lantern: { mass: 1.2, mat: 'metal' }, backpack: { mass: 3, mat: 'cloth' }, cooler: { mass: 5, mat: 'plastic' },
 };
 export const GLOW_MASS = 0.1;
-export const propInfo = (model: string): PropInfo => PROPS[model as AssetName] ?? { mass: 1, mat: 'plastic' };
+export const propInfo = (model: string): PropInfo => model === 'directorGun' ? { mass: 2.2, mat: 'metal' } : (PROPS[model as AssetName] ?? { mass: 1, mat: 'plastic' });

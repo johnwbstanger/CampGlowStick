@@ -8,16 +8,27 @@ export class Voice {
   private calls = new Map<string, MediaConnection>();
   private panners = new Map<string, PannerNode>();
   private peerToPlayer = new Map<string, number>();
+  private keepAlive = 0;
+  private mediaEls = new Map<string, HTMLAudioElement>();
 
   constructor(private s: Session) {
     const peer: Peer = s.peer;
-    peer.on('call', (call) => { call.answer(this.stream); this.attach(call); });
+    peer.on('call', (call) => {
+      for (const p of s.players) if (p.peer === call.peer) this.peerToPlayer.set(call.peer, p.id);
+      call.answer(this.stream);
+      this.attach(call);
+    });
   }
 
   async enable(): Promise<boolean> {
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
+      const ctx = audio(); if (ctx?.state === 'suspended') await ctx.resume().catch(() => undefined);
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false,
+      });
       this.callAll();
+      clearInterval(this.keepAlive);
+      this.keepAlive = window.setInterval(() => this.callAll(), 1800);
       return true;
     } catch (e) {
       console.warn('[voice] unavailable:', e instanceof Error ? e.message : e);
@@ -26,43 +37,61 @@ export class Voice {
   }
 
   disable(): void {
+    clearInterval(this.keepAlive); this.keepAlive = 0;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = undefined;
     this.calls.forEach((c) => c.close());
     this.calls.clear(); this.panners.clear();
+    this.mediaEls.forEach((el) => { el.pause(); el.srcObject = null; el.remove(); }); this.mediaEls.clear();
   }
 
-  /** Call every other camper (small mesh for voice only; gameplay stays host/star). Safe to call repeatedly. */
+  /** Call every other counselor. Safe to call repeatedly and used as a mobile/WebRTC reconciliation pass. */
   callAll(): void {
     if (!this.stream) return;
     for (const p of this.s.players) {
       this.peerToPlayer.set(p.peer, p.id);
       if (p.id === this.s.myId || this.calls.has(p.peer) || p.peer === this.s.peer.id) continue;
-      if (this.s.myId > p.id) continue; // lower id calls higher id once per pair
-      this.attach(this.s.peer.call(p.peer, this.stream));
+      if (this.s.myId > p.id) continue;
+      const call = this.s.peer.call(p.peer, this.stream, { metadata: { playerId: this.s.myId } });
+      if (call) this.attach(call);
     }
   }
 
   private attach(call: MediaConnection): void {
+    if (this.calls.has(call.peer)) return;
     this.calls.set(call.peer, call);
     call.on('stream', (remote) => {
       const a = audio(); if (!a) return;
+      if (a.state === 'suspended') void a.resume().catch(() => undefined);
       const panner = a.createPanner();
-      panner.panningModel = 'HRTF'; panner.distanceModel = 'inverse'; panner.refDistance = 2; panner.maxDistance = 40; panner.rolloffFactor = 1.5;
+      panner.panningModel = 'HRTF'; panner.distanceModel = 'inverse'; panner.refDistance = 2.2; panner.maxDistance = 46; panner.rolloffFactor = 1.35;
       a.createMediaStreamSource(remote).connect(panner).connect(a.destination);
       this.panners.set(call.peer, panner);
-      // Chromium only plays remote streams that are attached to a media element
-      const el = new Audio(); el.srcObject = remote; el.muted = true; void el.play().catch(() => undefined);
+
+      // Keeping an actual audio element attached improves WebRTC reliability on iPad/Safari.
+      let el = this.mediaEls.get(call.peer);
+      if (!el) {
+        el = document.createElement('audio'); el.autoplay = true; el.muted = true;
+        el.style.display = 'none'; document.body.append(el); this.mediaEls.set(call.peer, el);
+      }
+      el.srcObject = remote; void el.play().catch(() => undefined);
     });
-    call.on('close', () => { this.calls.delete(call.peer); this.panners.delete(call.peer); });
-    call.on('error', () => undefined);
+    const cleanup = () => {
+      this.calls.delete(call.peer); this.panners.delete(call.peer);
+      const el = this.mediaEls.get(call.peer); if (el) { el.pause(); el.srcObject = null; el.remove(); this.mediaEls.delete(call.peer); }
+    };
+    call.on('close', cleanup);
+    call.on('error', cleanup);
   }
 
   /** Called every frame with player positions by id, and the listener's pose. */
   update(listener: { x: number; y: number; z: number; yaw: number }, pos: (id: number) => { x: number; y: number; z: number } | undefined): void {
     const a = audio(); if (!a || !this.panners.size) return;
     const l = a.listener;
-    if (l.positionX) { l.positionX.value = listener.x; l.positionY.value = listener.y; l.positionZ.value = listener.z; l.forwardX.value = -Math.sin(listener.yaw); l.forwardZ.value = -Math.cos(listener.yaw); }
+    if (l.positionX) {
+      l.positionX.value = listener.x; l.positionY.value = listener.y; l.positionZ.value = listener.z;
+      l.forwardX.value = -Math.sin(listener.yaw); l.forwardY.value = 0; l.forwardZ.value = -Math.cos(listener.yaw);
+    }
     for (const [peerId, p] of this.panners) {
       const at = pos(this.peerToPlayer.get(peerId) ?? -1);
       if (at) { p.positionX.value = at.x; p.positionY.value = at.y; p.positionZ.value = at.z; }

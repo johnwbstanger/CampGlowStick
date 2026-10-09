@@ -1,4 +1,4 @@
-import { GLOW_COLORS } from '../game/constants';
+import { GLOW_COLORS, DAY_SECONDS } from '../game/constants';
 import { h } from './dom';
 
 export interface HudData {
@@ -9,24 +9,32 @@ export interface HudData {
 
 export class Hud {
   root = h('div', { id: 'hud' });
-  private tl = h('div', { cls: 'tl', id: 'hud-objective' });
+  private tl = h('div', { cls: 'tl compact', id: 'hud-objective' });
   private tr = h('div', { cls: 'tr', id: 'hud-players' });
   private bar = h('i');
-  private objective = h('div', {});
+  private objective = h('div', { cls: 'objective-line' });
   private heldText = h('span', {});
   private swatch = h('span', { cls: 'swatch' });
   private glowText = h('span', {});
   private info = h('div', { id: 'hud-held' }, this.heldText, this.swatch, this.glowText);
   private toastEl = h('div', { cls: 'toast', id: 'hud-toast' });
   private promptEl = h('div', { cls: 'prompt hidden', id: 'hud-prompt' });
+  private controls = h('div', { cls: 'controls-pop hidden', id: 'hud-controls-pop' },
+    h('div', {}, 'WASD move · Shift sprint · Tap Space jump · Hold Space crouch'),
+    h('div', {}, 'Mouse / arrows look · Click / E interact · Hold click then release to throw'),
+    h('div', {}, 'R place/drop · F flashlight · M map · G glowstick · 1–5 glow colour'));
+  private controlsButton = h('button', { cls: 'controls-toggle', id: 'hud-controls-toggle', type: 'button' }, 'Controls ▾');
   private result?: HTMLElement;
   private toastTimer = 0;
 
   constructor() {
-    this.tl.append(this.objective,
-      h('div', {}, 'WASD move · Shift sprint · Tap Space jump · Hold Space crouch'),
-      h('div', {}, 'Click / E interact · Hold click then release to throw · R place/drop · F flashlight'),
-      h('div', {}, 'M map · G snap glowstick · 1-5 colour · N day/night (host debug)'));
+    this.controlsButton.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const opening = this.controls.classList.contains('hidden');
+      this.controls.classList.toggle('hidden', !opening);
+      this.controlsButton.textContent = opening ? 'Controls ▴' : 'Controls ▾';
+    });
+    this.tl.append(this.objective, this.controlsButton, this.controls);
     this.root.append(this.tl, this.tr, h('div', { cls: 'cross' }), this.promptEl, this.toastEl,
       h('div', { cls: 'bl' }, this.info, h('div', { cls: 'stam' }, this.bar)));
   }
@@ -34,8 +42,10 @@ export class Hud {
   private setText(el: HTMLElement, text: string): void { if (el.textContent !== text) el.textContent = text; }
 
   update(d: HudData): void {
-    const dusk = Math.max(0, Math.min(120, Math.round(d.time)));
-    this.setText(this.objective, `${d.night ? 'NIGHT' : `SUNSET ${dusk}s`} · campers rescued ${d.rescued}/${d.camperNeed} · return to the bus`);
+    const dusk = Math.max(0, Math.min(DAY_SECONDS, Math.round(d.time)));
+    const remain = Math.max(0, DAY_SECONDS - dusk);
+    const mins = Math.floor(remain / 60), secs = remain % 60;
+    this.setText(this.objective, `${d.night ? 'NIGHT' : `DUSK ${mins}:${String(secs).padStart(2, '0')}`} · campers ${d.rescued}/${d.camperNeed} · return to bus`);
     this.setText(this.tr, `Counselors: ${d.names.join(', ')} · ${d.fps} fps`);
     this.bar.style.width = `${d.stamina}%`;
     this.setText(this.heldText, `Holding: ${d.held || 'nothing'}  `);

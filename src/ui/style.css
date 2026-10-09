@@ -4,31 +4,17 @@
   font-family: 'Rockwell', 'Courier New', Georgia, serif;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--pine); color: var(--cream); overflow: hidden; }
+html, body { margin: 0; height: 100%; background: var(--pine); color: var(--cream); overflow: hidden; touch-action: none; }
 #app { position: fixed; inset: 0; }
-canvas.game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-.screen {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px;
-  background: radial-gradient(circle at 50% 30%, #d9b27a 0%, var(--tan) 40%, #8f6a45 100%);
-  color: var(--wood);
-}
-.card {
-  width: min(560px, 100%); background: var(--cream); border: 6px solid var(--wood); border-radius: 10px;
-  box-shadow: 8px 8px 0 var(--orange), 14px 14px 0 var(--wood); padding: 24px 28px; max-height: 100%; overflow: auto;
-}
+canvas.game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.screen { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; background: radial-gradient(circle at 50% 30%, #d9b27a 0%, var(--tan) 40%, #8f6a45 100%); color: var(--wood); }
+.card { width: min(560px, 100%); background: var(--cream); border: 6px solid var(--wood); border-radius: 10px; box-shadow: 8px 8px 0 var(--orange), 14px 14px 0 var(--wood); padding: 24px 28px; max-height: 100%; overflow: auto; }
 .card h1 { margin: 0 0 4px; font-size: 40px; letter-spacing: 2px; color: var(--red); text-shadow: 3px 3px 0 var(--mustard); text-transform: uppercase; }
 .card h2 { margin: 0 0 8px; color: var(--pine); }
 .sub { margin: 0 0 18px; color: var(--avocado); font-style: italic; }
 label { display: block; font-weight: bold; margin: 12px 0 4px; color: var(--pine); text-transform: uppercase; font-size: 13px; letter-spacing: 1px; }
-input, select {
-  width: 100%; font: inherit; font-size: 18px; padding: 10px 12px; background: #fff8dc; color: var(--wood);
-  border: 3px solid var(--wood); border-radius: 6px;
-}
-button {
-  font: inherit; font-weight: bold; font-size: 18px; letter-spacing: 1px; text-transform: uppercase; cursor: pointer;
-  padding: 12px 18px; border: 3px solid var(--wood); border-radius: 6px; color: var(--cream); background: var(--orange);
-  box-shadow: 3px 3px 0 var(--wood);
-}
+input, select { width: 100%; font: inherit; font-size: 18px; padding: 10px 12px; background: #fff8dc; color: var(--wood); border: 3px solid var(--wood); border-radius: 6px; }
+button { font: inherit; font-weight: bold; font-size: 18px; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; padding: 12px 18px; border: 3px solid var(--wood); border-radius: 6px; color: var(--cream); background: var(--orange); box-shadow: 3px 3px 0 var(--wood); }
 button:hover:not(:disabled) { background: var(--red); }
 button:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--wood); }
 button:disabled { opacity: .45; cursor: not-allowed; }
@@ -46,8 +32,11 @@ ul.players li { display: flex; justify-content: space-between; padding: 8px 10px
 .loading h1 { font-size: clamp(24px, 6vw, 56px); color: var(--mustard); letter-spacing: 4px; margin: 0 0 18px; }
 .bar { width: min(360px, 80%); height: 14px; border: 3px solid var(--tan); border-radius: 8px; overflow: hidden; margin: 0 auto; }
 .bar > i { display: block; height: 100%; width: 0; background: var(--orange); }
-#hud { position: absolute; inset: 0; pointer-events: none; font-weight: bold; text-shadow: 2px 2px 0 rgba(26,58,43,.85); }
-#hud .tl { position: absolute; top: 12px; left: 14px; font-size: 15px; line-height: 1.5; background: rgba(26,58,43,.72); padding: 8px 12px; border-radius: 8px; border: 2px solid var(--tan); }
+#hud { position: absolute; inset: 0; pointer-events: none; font-weight: bold; text-shadow: 2px 2px 0 rgba(26,58,43,.85); z-index: 6; }
+#hud .tl { position: absolute; top: 12px; left: 14px; font-size: 14px; line-height: 1.45; background: rgba(26,58,43,.76); padding: 7px 9px; border-radius: 8px; border: 2px solid var(--tan); max-width: min(430px, 72vw); }
+#hud .objective-line { white-space: nowrap; }
+#hud .controls-toggle { pointer-events: auto; margin-top: 5px; padding: 4px 8px; font-size: 11px; border-width: 2px; box-shadow: 1px 1px 0 var(--wood); background: rgba(85,107,47,.9); }
+#hud .controls-pop { margin-top: 6px; padding-top: 5px; border-top: 1px solid rgba(255,253,208,.45); font-size: 11px; font-weight: normal; }
 #hud .bl { position: absolute; bottom: 14px; left: 14px; width: 260px; }
 #hud .tr { position: absolute; top: 12px; right: 14px; text-align: right; font-size: 13px; background: rgba(26,58,43,.72); padding: 8px 12px; border-radius: 8px; border: 2px solid var(--tan); }
 #hud .stam { height: 12px; border: 2px solid var(--tan); border-radius: 6px; background: rgba(26,58,43,.8); overflow: hidden; }
@@ -65,9 +54,37 @@ ul.players li { display: flex; justify-content: space-between; padding: 8px 10px
 .camp-map-hint { background: var(--cream); color: var(--wood); padding: 6px 12px; border: 3px solid var(--wood); border-radius: 6px; font-size: 14px; }
 .hidden { display: none !important; }
 
+/* Touch overlay is only shown on coarse-pointer/touch devices. */
+.touch-controls { display: none; position: absolute; inset: 0; z-index: 7; pointer-events: none; user-select: none; -webkit-user-select: none; }
+.touch-look { position: absolute; left: 43%; right: 0; top: 0; bottom: 0; pointer-events: auto; touch-action: none; }
+.touch-move { position: absolute; left: max(20px, env(safe-area-inset-left)); bottom: max(26px, env(safe-area-inset-bottom)); width: 132px; height: 132px; border-radius: 50%; background: rgba(26,58,43,.28); border: 3px solid rgba(255,253,208,.48); pointer-events: auto; touch-action: none; }
+.touch-knob { position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; margin: -29px; border-radius: 50%; background: rgba(224,159,62,.62); border: 3px solid rgba(255,253,208,.8); }
+.touch-btn { position: absolute; pointer-events: auto; touch-action: none; min-width: 62px; padding: 8px 10px; font-size: 11px; opacity: .8; border-width: 2px; box-shadow: 1px 1px 0 var(--wood); }
+.touch-btn.active { background: var(--mustard); color: var(--wood); opacity: 1; }
+.touch-use { right: 24px; bottom: 96px; width: 78px; height: 78px; border-radius: 50%; }
+.touch-jump { right: 108px; bottom: 42px; }
+.touch-sprint { left: 166px; bottom: 86px; }
+.touch-crouch { left: 166px; bottom: 42px; }
+.touch-flash { right: 20px; top: 96px; }
+.touch-glow { right: 92px; top: 96px; }
+.touch-map { right: 20px; top: 48px; }
+.touch-drop { right: 92px; top: 48px; }
+
+@media (pointer: coarse), (hover: none) {
+  .touch-controls { display: block; }
+  #hud .cross { opacity: .55; }
+  #hud .tr { display: none; }
+  #hud .tl { max-width: 70vw; font-size: 11px; }
+  #hud .objective-line { white-space: normal; }
+  #hud .bl { left: 18px; bottom: 176px; width: 210px; font-size: 12px; }
+  #hud .prompt { top: 42%; max-width: 72vw; white-space: normal; text-align: center; }
+  #hud .toast { bottom: 185px; font-size: 15px; }
+}
+
 @media (max-width: 760px) {
   #hud .tl { font-size: 11px; max-width: 74vw; }
   #hud .tr { display: none; }
   #hud .prompt { max-width: 88vw; white-space: normal; text-align: center; }
   #hud .toast { font-size: 15px; }
+  .touch-move { width: 116px; height: 116px; }
 }

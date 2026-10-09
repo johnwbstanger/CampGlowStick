@@ -8,11 +8,14 @@ import { TICK_MS } from '../net/protocol';
 import type { Session } from '../net/session';
 import { CampMap } from '../ui/campMap';
 import { Hud } from '../ui/hud';
+import { TouchControls } from '../ui/touchControls';
 import { Actor, RemotePlayer } from './avatars';
 import { CamperActor } from './campers';
 import { camperFoundLine, camperName } from './camperDialogue';
+import { buildCampDecor } from './campDecor';
 import { GLOW_NAMES, REACH } from './constants';
 import { makeGlowstick, makeLootHalo } from './glow';
+import { makeDirectorGun } from './gun';
 import { HostSim } from './hostsim';
 import { damp } from './interp';
 import { propInfo } from './items';
@@ -45,6 +48,7 @@ export class Game {
   local: LocalPlayer;
   hud = new Hud();
   campMap: CampMap;
+  touch: TouchControls;
   remotes = new Map<number, RemotePlayer>();
   items = new Map<number, ItemView>();
   campers = new Map<number, CamperView>();
@@ -79,9 +83,15 @@ export class Game {
     this.renderer.domElement.className = 'game';
     this.light = new Lighting(this.scene, this.renderer, this.camera);
     this.world = buildWorld(layout);
-    this.scene.add(this.world.group);
+    this.scene.add(this.world.group, buildCampDecor(layout));
     this.local = new LocalPlayer(this.camera, this.renderer.domElement, layout);
     this.campMap = new CampMap(layout);
+    this.touch = new TouchControls(this.local, {
+      interact: () => this.interact(),
+      drop: () => this.act('drop'),
+      glow: () => this.act('snap'),
+      map: () => this.toggleMap(),
+    });
     const sp = layout.spawns[net.myId % layout.spawns.length];
     this.local.teleport(sp[0], sp[1]);
     for (const p of net.players) if (p.id !== net.myId) this.remotes.set(p.id, new RemotePlayer(p.id, p.name, this.scene));
@@ -95,7 +105,7 @@ export class Game {
     const made = HostSim.makeDefs(layout);
     for (const d of made.defs) this.addItemView(d);
 
-    root.replaceChildren(this.renderer.domElement, this.hud.root, this.campMap.root);
+    root.replaceChildren(this.renderer.domElement, this.hud.root, this.campMap.root, this.touch.root);
     this.resize();
     addEventListener('resize', this.resize);
     this.renderer.domElement.addEventListener('pointerdown', this.pointerDown);
@@ -113,20 +123,27 @@ export class Game {
     this.camera.aspect = innerWidth / innerHeight;
     this.camera.updateProjectionMatrix();
   };
+  private toggleMap(): void { const open = this.campMap.toggle(); if (open) document.exitPointerLock?.(); }
+  private heldView(): ItemView | undefined { const id = this.snap?.players[this.net.myId]?.held ?? -1; return this.items.get(id); }
+  private hasHeldItem(): boolean { return !!this.heldView(); }
+  private hasGun(): boolean { return this.heldView()?.def.model === 'directorGun'; }
 
-  private hasHeldItem(): boolean { return (this.snap?.players[this.net.myId]?.held ?? -1) >= 0; }
   private interact = (quickThrow = true): void => {
     if (this.snap?.over || this.campMap.open) return;
-    if (this.hasHeldItem()) this.act('throw', quickThrow ? 0.28 : 0.5);
+    if (this.hasGun()) this.act('fire');
+    else if (this.hasHeldItem()) this.act('throw', quickThrow ? 0.28 : 0.5);
     else this.act('pick');
   };
 
   private pointerDown = (e: PointerEvent): void => {
     if (e.button !== 0 || this.snap?.over || this.campMap.open) return;
+    if (e.pointerType === 'touch') return;
     if (document.pointerLockElement !== this.renderer.domElement) { void this.renderer.domElement.requestPointerLock?.(); return; }
+    if (this.hasGun()) { this.act('fire'); return; }
     if (this.hasHeldItem()) this.mouseDownAt = performance.now(); else this.interact();
   };
   private pointerUp = (e: PointerEvent): void => {
+    if (e.pointerType === 'touch') return;
     if (e.button !== 0 || !this.mouseDownAt || this.snap?.over || this.campMap.open) return;
     const heldMs = performance.now() - this.mouseDownAt; this.mouseDownAt = 0;
     this.act('throw', THREE.MathUtils.clamp((heldMs - 60) / 900, 0.2, 1));
@@ -134,11 +151,7 @@ export class Game {
 
   private key = (e: KeyboardEvent): void => {
     if (e.repeat || this.snap?.over) return;
-    if (e.code === 'KeyM') {
-      const open = this.campMap.toggle();
-      if (open) document.exitPointerLock?.();
-      return;
-    }
+    if (e.code === 'KeyM') { this.toggleMap(); return; }
     if (this.campMap.open) return;
     if (e.code === 'KeyE') this.interact();
     else if (e.code === 'KeyR') this.act('drop');
@@ -147,23 +160,21 @@ export class Game {
     else if (/^Digit[1-5]$/.test(e.code)) { this.glow = GLOW_NAMES[Number(e.code.slice(5)) - 1]; this.hud.toast(`Glowstick: ${this.glow}`); }
   };
 
-  act(a: 'pick' | 'drop' | 'throw' | 'snap' | 'night', force?: number): void {
+  act(a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire', force?: number): void {
     this.net.sendToHost({ t: 'act', a, color: this.glow, force });
     if (a === 'snap') playMaterial('glow', 5);
+    if (a === 'fire') { playMaterial('metal', 8); this.hud.toast('BANG! The shot will draw attention.'); }
   }
 
   private addItemView(def: ItemDef): void {
     if (this.items.has(def.id)) return;
-    const obj = def.kind === 'glow' ? makeGlowstick(def.color ?? 'green') : getModel(def.model as AssetName);
+    const obj = def.kind === 'glow' ? makeGlowstick(def.color ?? 'green') : def.model === 'directorGun' ? makeDirectorGun() : getModel(def.model as AssetName);
     if (def.kind === 'loot') obj.add(makeLootHalo());
     this.scene.add(obj);
     this.items.set(def.id, { def, obj, target: new THREE.Vector3(), q: new THREE.Quaternion(), init: false });
   }
 
-  handle(msg: Msg): void {
-    if (msg.t === 'spawn') this.addItemView(msg.def);
-    else if (msg.t === 's') this.applySnap(msg);
-  }
+  handle(msg: Msg): void { if (msg.t === 'spawn') this.addItemView(msg.def); else if (msg.t === 's') this.applySnap(msg); }
 
   private applySnap(s: GameSnap): void {
     this.snap = s;
@@ -173,7 +184,6 @@ export class Game {
       if (r) { r.target = st; r.alive = st.alive; }
       else if (Number(id) === this.net.myId && !st.alive) this.local.alive = false;
     }
-
     const seen = new Set<number>();
     for (const [id, x, y, z, qx, qy, qz, qw] of s.items) {
       seen.add(id); const v = this.items.get(id); if (!v) continue;
@@ -204,8 +214,9 @@ export class Game {
   }
 
   private held(): { name: string; mass: number } {
-    const id = this.snap?.players[this.net.myId]?.held ?? -1; const it = this.items.get(id);
+    const it = this.heldView();
     if (!it) return { name: '', mass: 0 };
+    if (it.def.model === 'directorGun') return { name: `director's emergency gun`, mass: 2.2 };
     return { name: it.def.kind === 'glow' ? `${it.def.color} glowstick` : it.def.model, mass: it.def.kind === 'glow' ? 0.1 : propInfo(it.def.model).mass };
   }
 
@@ -217,10 +228,10 @@ export class Game {
 
   private contextPrompt(heldName: string): string {
     if (this.campMap.open) return '';
+    if (this.hasGun()) return `DIRECTOR'S GUN · Click / USE to fire · R to drop`;
     if (heldName) return `Holding ${heldName} · release click to throw · R to place`;
     const ex = this.layout.extraction;
     if (Math.hypot(this.local.pos.x - ex.x, this.local.pos.z - ex.z) < ex.r + 2) return 'BUS SAFE ZONE · board through the side door';
-
     let best = REACH + .7, text = '';
     for (const c of this.snap?.campers ?? []) {
       if (c.rescued || c.foundBy >= 0) continue;
@@ -229,7 +240,9 @@ export class Game {
     }
     for (const v of this.items.values()) {
       const f = this.facingScore(v.target.x, v.target.z);
-      if (f.d < best && (f.d < 1 || f.facing > .48)) { best = f.d; text = `Click / E — pick up ${v.def.kind === 'glow' ? 'glowstick' : v.def.model}`; }
+      if (f.d < best && (f.d < 1 || f.facing > .48)) {
+        best = f.d; text = `Click / E — pick up ${v.def.model === 'directorGun' ? `director's emergency gun` : v.def.kind === 'glow' ? 'glowstick' : v.def.model}`;
+      }
     }
     return text;
   }
@@ -251,14 +264,16 @@ export class Game {
       const moving = v.target.distanceToSquared(v.lastTarget) > 0.0025;
       v.actor.root.position.lerp(v.target, damp(12, dt));
       if (moving) v.actor.root.rotation.y = Math.atan2(v.target.x - v.lastTarget.x, v.target.z - v.lastTarget.z) + Math.PI;
-      v.actor.update(dt, moving, this.monsterMode === 'chase');
+      v.actor.update(dt, moving, this.monsterMode === 'chase', v.foundBy < 0 && !v.rescued);
     }
     if (!this.snap?.over) {
       this.monster.root.position.lerp(this.monsterTarget, damp(8, dt));
-      this.monster.play(this.monsterMode === 'idle' ? 'idle' : this.monsterMode === 'chase' ? 'sprint' : 'walk'); this.monster.update(dt);
+      this.monster.play(this.monsterMode === 'idle' || this.monsterMode === 'stunned' ? 'idle' : this.monsterMode === 'chase' ? 'sprint' : 'walk'); this.monster.update(dt);
+      this.monster.root.rotation.z = this.monsterMode === 'stunned' ? Math.sin(now * .02) * .08 : 0;
     }
     this.voice?.update({ x: this.local.pos.x, y: this.local.pos.y + 1.6, z: this.local.pos.z, yaw: this.local.yaw }, (id) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, y: r.pos.y + 1.6, z: r.pos.z } : undefined; });
-    this.campMap.update(this.local.pos.x, this.local.pos.z, this.local.yaw);
+    const mapPlayers = [...this.remotes.values()].filter((r) => r.alive).map((r) => ({ x: r.pos.x, z: r.pos.z, name: r.name }));
+    this.campMap.update(this.local.pos.x, this.local.pos.z, this.local.yaw, mapPlayers);
     this.hud.update({ stamina: this.local.stamina, held: held.name, glow: this.glow, night: this.snap?.night ?? false, time: this.snap?.time ?? 0, collected: this.snap?.collected ?? 0, need: this.layout.need, rescued: this.snap?.rescued ?? 0, camperNeed: this.snap?.camperNeed ?? 7, names: this.net.players.map((p) => p.name), fps: this.fps, prompt: this.contextPrompt(held.name) });
     this.renderer.render(this.scene, this.camera);
   }
@@ -267,7 +282,7 @@ export class Game {
     window.__cg = {
       ready: true, myId: this.net.myId, isHost: this.net.isHost, need: this.layout.need, frames: () => this.frames, reach: REACH,
       teleport: (x: number, z: number) => this.local.teleport(x, z), look: (yaw: number) => { this.local.yaw = yaw; },
-      act: (a: 'pick' | 'drop' | 'throw' | 'snap' | 'night', force?: number) => this.act(a, force), setGlow: (c: string) => { this.glow = c; },
+      act: (a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire', force?: number) => this.act(a, force), setGlow: (c: string) => { this.glow = c; },
       local: () => ({ x: this.local.pos.x, y: this.local.pos.y, z: this.local.pos.z, stamina: this.local.stamina }),
       remote: (id: number) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, z: r.pos.z, tx: r.target?.p[0], tz: r.target?.p[2] } : null; }, remoteIds: () => [...this.remotes.keys()],
       campers: () => this.snap?.campers ?? [],
@@ -288,7 +303,7 @@ export class Game {
   removeRemote(id: number): void { this.remotes.get(id)?.dispose(this.scene); this.remotes.delete(id); }
   dispose(): void {
     this.disposed = true; this.timers.forEach(clearInterval); this.renderer.setAnimationLoop(null); removeEventListener('resize', this.resize); removeEventListener('keydown', this.key);
-    this.renderer.domElement.removeEventListener('pointerdown', this.pointerDown); this.renderer.domElement.removeEventListener('pointerup', this.pointerUp); this.local.dispose(); this.net.onHostMessage = undefined;
+    this.renderer.domElement.removeEventListener('pointerdown', this.pointerDown); this.renderer.domElement.removeEventListener('pointerup', this.pointerUp); this.touch.dispose(); this.local.dispose(); this.net.onHostMessage = undefined;
     delete window.__cg; document.exitPointerLock?.(); this.renderer.dispose();
   }
 }

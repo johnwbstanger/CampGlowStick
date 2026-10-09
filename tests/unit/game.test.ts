@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { drainRate, stepStamina } from '../../src/game/stamina';
-import { STAMINA } from '../../src/game/constants';
+import { DAY_SECONDS, STAMINA } from '../../src/game/constants';
 import { NoiseBus, falloff } from '../../src/game/noise';
 import { MONSTER, newMonster, stepMonster } from '../../src/game/monster';
 import { resolveCapsule } from '../../src/game/colliders';
 import { lerpAngle } from '../../src/game/interp';
 import { buildLayout } from '../../src/game/layout';
+import { findPath } from '../../src/game/navigation';
 
 describe('stamina', () => {
   it('drain = base * (1 + carry / cap)', () => {
@@ -18,6 +19,12 @@ describe('stamina', () => {
   it('regenerates and clamps', () => {
     expect(stepStamina(50, 1, false, 0)).toBe(50 + STAMINA.regen);
     expect(stepStamina(1, 10, true, 0)).toBe(0);
+  });
+});
+
+describe('dusk', () => {
+  it('uses a six minute sunset-to-night transition', () => {
+    expect(DAY_SECONDS).toBe(360);
   });
 });
 
@@ -46,7 +53,6 @@ describe('noise + monster', () => {
   it('redirects search toward a thrown object impact when no player is visible', () => {
     const bus = new NoiseBus(), m = newMonster(0, 0);
     m.mode = 'search'; m.tx = 0; m.tz = 4; m.timer = 3;
-    // Ordinary footsteps are louder at the source, but the deliberate thrown impact is the intended decoy.
     bus.emit({ x: 1, z: 1, vol: 5, mat: 'step', t: 0, source: 'step' });
     bus.emit({ x: 9, z: -2, vol: 6, mat: 'can', t: 0, source: 'thrown-impact' });
     stepMonster(m, 0.1, 0.1, bus, [{ id: 1, x: 30, z: 30, crouch: false, alive: true }], true);
@@ -77,5 +83,11 @@ describe('colliders, interp, layout', () => {
     const a = buildLayout(7), b = buildLayout(7);
     expect(a).toEqual(b);
     expect(a.items.filter((i) => i.kind === 'loot').length).toBeGreaterThanOrEqual(a.need);
+  });
+  it('routes around a solid building rather than through it', () => {
+    const wall = [{ minX: -2, maxX: 2, minZ: -4, maxZ: 4, minY: 0, maxY: 3 }];
+    const path = findPath(-8, 0, 8, 0, wall, 0.48, 2);
+    expect(path.length).toBeGreaterThan(1);
+    expect(path.some((p) => Math.abs(p.z) > 4)).toBe(true);
   });
 });

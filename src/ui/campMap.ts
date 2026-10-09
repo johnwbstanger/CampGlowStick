@@ -1,7 +1,10 @@
 import type { Layout } from '../game/layout';
 import { WORLD_HALF } from '../game/constants';
+import { LANDMARKS } from '../game/landmarks';
 
-/** Retro illustrated top-down map. It intentionally shows landmarks, not hidden camper locations. */
+export interface MapPlayer { x: number; z: number; name: string }
+
+/** Retro illustrated top-down map. It shows counselors and landmarks, but never hidden campers. */
 export class CampMap {
   root = document.createElement('div');
   private canvas = document.createElement('canvas');
@@ -10,6 +13,7 @@ export class CampMap {
   private px = 0;
   private pz = 0;
   private yaw = 0;
+  private players: MapPlayer[] = [];
 
   constructor(private layout: Layout) {
     this.root.className = 'camp-map hidden';
@@ -20,7 +24,7 @@ export class CampMap {
     this.ctx = this.canvas.getContext('2d')!;
     const hint = document.createElement('div');
     hint.className = 'camp-map-hint';
-    hint.textContent = 'M to close · campers are not marked';
+    hint.textContent = 'M to close · counselors are marked · campers are not';
     this.root.append(title, this.canvas, hint);
     this.draw();
   }
@@ -34,8 +38,8 @@ export class CampMap {
   hide(): void { this.visible = false; this.root.classList.add('hidden'); }
   get open(): boolean { return this.visible; }
 
-  update(x: number, z: number, yaw: number): void {
-    this.px = x; this.pz = z; this.yaw = yaw;
+  update(x: number, z: number, yaw: number, players: MapPlayer[] = []): void {
+    this.px = x; this.pz = z; this.yaw = yaw; this.players = players;
     if (this.visible) this.draw();
   }
 
@@ -48,7 +52,6 @@ export class CampMap {
     c.fillStyle = '#f7efce'; c.fillRect(0, 0, w, h);
     c.strokeStyle = '#5c4033'; c.lineWidth = 7; c.strokeRect(8, 8, w - 16, h - 16);
 
-    // forest paper border
     c.fillStyle = '#556b2f';
     c.fillRect(16, 16, w - 32, 22); c.fillRect(16, h - 38, w - 32, 22);
     c.fillRect(16, 38, 22, h - 76); c.fillRect(w - 38, 38, 22, h - 76);
@@ -58,18 +61,15 @@ export class CampMap {
       c.fillStyle = '#92a45f'; c.globalAlpha = .72; c.fill(); c.globalAlpha = 1;
     }
 
-    // water
     c.beginPath(); c.ellipse(this.sx(this.layout.water.x), this.sy(this.layout.water.z), this.layout.water.rx * 2.25, this.layout.water.rz * 2.25, 0, 0, Math.PI * 2);
     c.fillStyle = '#78b9c3'; c.fill(); c.strokeStyle = '#315d6f'; c.lineWidth = 3; c.stroke();
 
-    // roads
     c.lineCap = 'round'; c.lineJoin = 'round';
     for (const road of this.layout.roads) {
       c.beginPath(); road.points.forEach(([x, z], i) => i ? c.lineTo(this.sx(x), this.sy(z)) : c.moveTo(this.sx(x), this.sy(z)));
       c.strokeStyle = '#b86c36'; c.lineWidth = Math.max(5, road.width * 1.65); c.stroke();
     }
 
-    // buildings and landmarks
     for (const s of this.layout.statics) {
       if (s.name === 'tree' || s.name === 'tree2' || s.name === 'tree3') continue;
       const x = this.sx(s.x), y = this.sy(s.z);
@@ -86,21 +86,38 @@ export class CampMap {
       }
     }
 
-    // trees as graphic dots, sampled to keep the map readable
+    c.font = 'bold 11px Rockwell, Georgia, serif';
+    for (const b of LANDMARKS) {
+      const x = this.sx(b.x), y = this.sy(b.z), scale = 2.05;
+      c.save(); c.translate(x, y); c.rotate(-b.rot);
+      c.fillStyle = b.kind === 'bathhouse' ? '#68736b' : '#7b5b3a';
+      c.fillRect(-b.w * scale / 2, -b.d * scale / 2, b.w * scale, b.d * scale);
+      c.strokeStyle = '#f0d36b'; c.lineWidth = 2; c.strokeRect(-b.w * scale / 2, -b.d * scale / 2, b.w * scale, b.d * scale);
+      c.restore();
+      c.fillStyle = '#5c4033'; c.fillText(b.label, x + 8, y - b.d * 1.25);
+    }
+
     c.fillStyle = '#355f35';
     for (let i = 0; i < this.layout.trees.length; i += 4) {
       const t = this.layout.trees[i]; c.beginPath(); c.arc(this.sx(t.x), this.sy(t.z), 2.3, 0, Math.PI * 2); c.fill();
     }
 
-    // labels
     c.font = 'bold 15px Rockwell, Georgia, serif'; c.fillStyle = '#5c4033';
     const labels: [string, number, number][] = [
       ['BUS / EXIT', 31, 2], ['CAMPFIRE', 0, 6], ['WATERFRONT', 92, -6], ['TENT FIELD', -7, 58], ['MAINT.', -102, -42], ['MAINT.', 97, -29],
     ];
     labels.forEach(([text, x, z]) => c.fillText(text, this.sx(x) + 9, this.sy(z) - 9));
 
-    // player arrow
+    c.font = 'bold 12px Rockwell, Georgia, serif';
+    for (const p of this.players) {
+      const x = this.sx(p.x), y = this.sy(p.z);
+      c.beginPath(); c.arc(x, y, 6, 0, Math.PI * 2); c.fillStyle = '#008080'; c.fill();
+      c.strokeStyle = '#fffdd0'; c.lineWidth = 2; c.stroke();
+      c.fillStyle = '#5c4033'; c.fillText(p.name.slice(0, 10), x + 8, y - 7);
+    }
+
     const x = this.sx(this.px), y = this.sy(this.pz);
     c.save(); c.translate(x, y); c.rotate(-this.yaw); c.beginPath(); c.moveTo(0, -11); c.lineTo(7, 8); c.lineTo(0, 4); c.lineTo(-7, 8); c.closePath(); c.fillStyle = '#9b2226'; c.fill(); c.strokeStyle = '#fffdd0'; c.lineWidth = 2; c.stroke(); c.restore();
+    c.font = 'bold 12px Rockwell, Georgia, serif'; c.fillStyle = '#9b2226'; c.fillText('YOU', x + 10, y + 4);
   }
 }

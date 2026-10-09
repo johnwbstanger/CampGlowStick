@@ -10,8 +10,9 @@ import { isDeepWater, terrainHeight } from './terrain';
 const CROUCH_HOLD_MS = 180;
 const JUMP_SPEED = 5.4;
 const GRAVITY = 15.5;
+const KEY_LOOK = 1.75;
 
-/** First-person controller: WASD + mouse look, Shift sprint, tap Space to jump, hold Space to crouch. */
+/** First-person controller with desktop and touch inputs. Arrow keys are camera look, WASD is movement. */
 export class LocalPlayer {
   pos = { x: 0, y: 0, z: 0 };
   yaw = 0;
@@ -28,13 +29,15 @@ export class LocalPlayer {
   private spaceDownAt = 0;
   private jumpVelocity = 0;
   private grounded = true;
+  private touchMoveX = 0;
+  private touchMoveY = 0;
+  private touchSprint = false;
+  private touchCrouch = false;
 
   private onKeyDown = (e: KeyboardEvent): void => {
     if (!e.repeat && e.code === 'KeyF') this.flash = !this.flash;
-    if (!e.repeat && e.code === 'Space') {
-      e.preventDefault();
-      this.spaceDownAt = performance.now();
-    }
+    if (!e.repeat && e.code === 'Space') { e.preventDefault(); this.spaceDownAt = performance.now(); }
+    if (e.code.startsWith('Arrow')) e.preventDefault();
     this.keys.add(e.code);
   };
 
@@ -42,20 +45,19 @@ export class LocalPlayer {
     if (e.code === 'Space') {
       e.preventDefault();
       const heldMs = this.spaceDownAt ? performance.now() - this.spaceDownAt : Infinity;
-      if (heldMs < CROUCH_HOLD_MS && this.grounded && this.alive) {
-        this.jumpVelocity = JUMP_SPEED;
-        this.grounded = false;
-      }
+      if (heldMs < CROUCH_HOLD_MS) this.jump();
       this.spaceDownAt = 0;
     }
     this.keys.delete(e.code);
   };
 
-  private onBlur = (): void => { this.keys.clear(); this.spaceDownAt = 0; this.crouch = false; };
+  private onBlur = (): void => {
+    this.keys.clear(); this.spaceDownAt = 0; this.crouch = false;
+    this.touchMoveX = this.touchMoveY = 0; this.touchSprint = this.touchCrouch = false;
+  };
   private onMouseMove = (e: MouseEvent): void => {
     if (document.pointerLockElement !== this.canvas) return;
-    this.yaw -= e.movementX * 0.0022;
-    this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - e.movementY * 0.0022));
+    this.lookDelta(e.movementX, e.movementY);
   };
 
   constructor(private camera: THREE.PerspectiveCamera, private canvas: HTMLElement, private layout: Layout) {
@@ -78,28 +80,52 @@ export class LocalPlayer {
     this.jumpVelocity = 0; this.grounded = true;
   }
   pressed(code: string): boolean { return this.keys.has(code); }
+  setTouchMove(x: number, y: number): void { this.touchMoveX = THREE.MathUtils.clamp(x, -1, 1); this.touchMoveY = THREE.MathUtils.clamp(y, -1, 1); }
+  setTouchSprint(on: boolean): void { this.touchSprint = on; }
+  setTouchCrouch(on: boolean): void { this.touchCrouch = on; }
+  toggleFlash(): void { this.flash = !this.flash; }
+  jump(): void { if (this.grounded && this.alive) { this.jumpVelocity = JUMP_SPEED; this.grounded = false; } }
+  lookDelta(dx: number, dy: number): void {
+    this.yaw -= dx * 0.0022;
+    this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - dy * 0.0022));
+  }
 
   update(dt: number, colliders: Box[], carry: number): void {
     const k = this.keys;
-    const f = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0);
-    const s = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
+    if (k.has('ArrowLeft')) this.yaw += KEY_LOOK * dt;
+    if (k.has('ArrowRight')) this.yaw -= KEY_LOOK * dt;
+    if (k.has('ArrowUp')) this.pitch = Math.min(1.45, this.pitch + KEY_LOOK * 0.72 * dt);
+    if (k.has('ArrowDown')) this.pitch = Math.max(-1.45, this.pitch - KEY_LOOK * 0.72 * dt);
+
+    let f = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0);
+    let s = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0);
+    if (Math.abs(this.touchMoveY) > Math.abs(f)) f = -this.touchMoveY;
+    if (Math.abs(this.touchMoveX) > Math.abs(s)) s = this.touchMoveX;
     const heldSpaceMs = k.has('Space') && this.spaceDownAt ? performance.now() - this.spaceDownAt : 0;
-    this.crouch = this.grounded && heldSpaceMs >= CROUCH_HOLD_MS;
-    this.moving = this.alive && (f !== 0 || s !== 0);
+    this.crouch = this.grounded && (heldSpaceMs >= CROUCH_HOLD_MS || this.touchCrouch);
+    this.moving = this.alive && (Math.abs(f) > 0.04 || Math.abs(s) > 0.04);
 
     if (this.exhausted && this.stamina > STAMINA.minToSprint) this.exhausted = false;
-    this.sprint = this.moving && !this.crouch && this.grounded && k.has('ShiftLeft') && !this.exhausted && this.stamina > 0;
+    this.sprint = this.moving && !this.crouch && this.grounded && (k.has('ShiftLeft') || this.touchSprint) && !this.exhausted && this.stamina > 0;
     this.stamina = stepStamina(this.stamina, dt, this.sprint, carry);
     if (this.stamina <= 0) this.exhausted = true;
 
-    const ox = this.pos.x, oz = this.pos.z;
     if (this.moving) {
       const speed = this.crouch ? PLAYER.crouch : this.sprint ? PLAYER.sprint : PLAYER.walk;
-      const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw), len = Math.hypot(f, s);
-      this.pos.x += ((-sin * f + cos * s) / len) * speed * dt;
-      this.pos.z += ((-cos * f - sin * s) / len) * speed * dt;
-      if (isDeepWater(this.pos.x, this.pos.z, this.layout)) { this.pos.x = ox; this.pos.z = oz; }
-      resolveCapsule(this.pos, PLAYER.radius, this.crouch ? PLAYER.crouchHeight : PLAYER.height, colliders, WORLD_HALF);
+      const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw), len = Math.max(1, Math.hypot(f, s));
+      const dx = ((-sin * f + cos * s) / len) * speed * dt;
+      const dz = ((-cos * f - sin * s) / len) * speed * dt;
+      const h = this.crouch ? PLAYER.crouchHeight : PLAYER.height;
+      const ox = this.pos.x, oz = this.pos.z;
+
+      // Resolve each axis separately. This produces natural wall sliding and eliminates most "hit nothing and stop" corner snags.
+      this.pos.x += dx;
+      resolveCapsule(this.pos, PLAYER.radius, h, colliders, WORLD_HALF);
+      if (isDeepWater(this.pos.x, this.pos.z, this.layout)) this.pos.x = ox;
+
+      this.pos.z += dz;
+      resolveCapsule(this.pos, PLAYER.radius, h, colliders, WORLD_HALF);
+      if (isDeepWater(this.pos.x, this.pos.z, this.layout)) this.pos.z = oz;
     }
 
     const groundY = terrainHeight(this.pos.x, this.pos.z, this.layout);
@@ -107,11 +133,7 @@ export class LocalPlayer {
     if (!this.grounded || this.jumpVelocity > 0) {
       this.jumpVelocity -= GRAVITY * dt;
       this.pos.y += this.jumpVelocity * dt;
-      if (this.pos.y <= groundY) {
-        this.pos.y = groundY;
-        this.jumpVelocity = 0;
-        this.grounded = true;
-      }
+      if (this.pos.y <= groundY) { this.pos.y = groundY; this.jumpVelocity = 0; this.grounded = true; }
     }
 
     this.eye += ((this.crouch ? PLAYER.crouchEye : PLAYER.eye) - this.eye) * damp(12, dt);

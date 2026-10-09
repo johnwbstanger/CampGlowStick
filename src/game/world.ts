@@ -4,6 +4,7 @@ import type { AssetName } from '../assets/manifest';
 import type { Box } from './colliders';
 import { WORLD_HALF } from './constants';
 import { makeDecalCanvas } from './graffiti';
+import { LANDMARKS, type LandmarkDef } from './landmarks';
 import type { Layout, Placed } from './layout';
 import { terrainHeight } from './terrain';
 
@@ -106,7 +107,64 @@ function makeRoadOverlay(layout: Layout): THREE.Group {
   return group;
 }
 
-/** Full-size enterable camp bus shell. Imported van placeholder is intentionally replaced here. */
+function addSign(group: THREE.Group, text: string, y: number, z: number, width: number): void {
+  const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 128; const c = canvas.getContext('2d')!;
+  c.fillStyle = '#5c4033'; c.fillRect(0, 0, 512, 128); c.strokeStyle = '#e09f3e'; c.lineWidth = 12; c.strokeRect(8, 8, 496, 112);
+  c.fillStyle = '#fffdd0'; c.font = 'bold 52px Rockwell, Georgia, serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(text, 256, 66);
+  const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace;
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(width, width * .25), new THREE.MeshBasicMaterial({ map: tex })); sign.position.set(0, y, z); group.add(sign);
+}
+
+function makeLandmark(def: LandmarkDef, layout: Layout, colliders: Box[]): THREE.Group {
+  const g = new THREE.Group(), y = terrainHeight(def.x, def.z, layout), t = .18;
+  g.position.set(def.x, y, def.z); g.rotation.y = def.rot;
+  const wall = new THREE.MeshStandardMaterial({ color: '#7b5b3a', roughness: .96, metalness: 0 });
+  const trim = new THREE.MeshStandardMaterial({ color: '#e3c58f', roughness: .9, metalness: 0 });
+  const roof = new THREE.MeshStandardMaterial({ color: def.kind === 'bathhouse' ? '#55645b' : '#8b3f32', roughness: .9, metalness: .02 });
+  const floorMat = new THREE.MeshStandardMaterial({ color: '#6b5138', roughness: 1 });
+  const dark = new THREE.MeshStandardMaterial({ color: '#2b302c', roughness: .8 });
+  const accent = new THREE.MeshStandardMaterial({ color: '#d89a3d', roughness: .85 });
+  const panel = (w: number, h: number, d: number, x: number, yy: number, z: number, mat = wall) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, yy, z); m.castShadow = m.receiveShadow = true; g.add(m); return m;
+  };
+  panel(def.w, .12, def.d, 0, .06, 0, floorMat);
+  panel(def.w, def.h, t, 0, def.h / 2, -def.d / 2, wall);
+  panel(t, def.h, def.d, -def.w / 2, def.h / 2, 0, wall); panel(t, def.h, def.d, def.w / 2, def.h / 2, 0, wall);
+  const door = 1.65;
+  panel((def.w - door) / 2, def.h, t, -(def.w + door) / 4, def.h / 2, def.d / 2, wall);
+  panel((def.w - door) / 2, def.h, t, (def.w + door) / 4, def.h / 2, def.d / 2, wall);
+  panel(def.w + .45, .22, def.d + .65, 0, def.h + .12, 0, roof);
+  panel(def.w - .7, .11, def.d - .7, 0, def.h - .2, 0, trim);
+  addSign(g, def.label, def.h - .65, def.d / 2 + .11, Math.min(def.w * .62, 6));
+
+  // Furniture and room-specific identity. These are deliberately simple, solid camp fixtures,
+  // while the exterior remains in the same warm wood/earth palette as the approved environment.
+  const table = (x: number, z: number, w = 2.3, d = .8) => {
+    panel(w, .12, d, x, .78, z, trim); panel(.12, .72, .12, x - w * .38, .4, z - d * .28, dark); panel(.12, .72, .12, x + w * .38, .4, z + d * .28, dark);
+  };
+  if (def.kind === 'dining') {
+    for (const x of [-4.5, 0, 4.5]) for (const z of [-1.8, 1.3]) table(x, z, 3.1, .9);
+  } else if (def.kind === 'kitchen') {
+    panel(def.w - 1.4, .92, .65, 0, .48, -def.d / 2 + .65, trim);
+    panel(2.2, 1.1, .8, -2.7, .55, 1.4, accent); panel(2.2, 1.1, .8, 2.7, .55, 1.4, accent);
+  } else if (def.kind === 'director') {
+    table(0, -.4, 2.5, 1.05); panel(2.8, 1.8, .35, -def.w / 2 + .6, .9, -1.2, trim);
+  } else if (def.kind === 'arts') {
+    table(-2.4, -1.4, 3.0, 1); table(2.4, -1.4, 3.0, 1); table(0, 1.6, 3.4, 1);
+  } else if (def.kind === 'bathhouse') {
+    for (const x of [-3, -1, 1, 3]) panel(.12, 2.1, 2.6, x, 1.05, -.9, trim);
+    panel(def.w - 1.2, .16, .48, 0, .55, 2.35, trim);
+  }
+
+  // Because the landmark rotations are either small or cardinal, an axis-aligned shell is a good
+  // gameplay collider approximation. Director swaps width/depth at ~90 degrees.
+  const swap = Math.abs(Math.sin(def.rot)) > .7, ww = swap ? def.d : def.w, dd = swap ? def.w : def.d;
+  const b: Box = { minX: def.x - ww / 2, maxX: def.x + ww / 2, minZ: def.z - dd / 2, maxZ: def.z + dd / 2, minY: y, maxY: y + def.h };
+  hollowBuildingColliders(colliders, b, def.rot, door);
+  return g;
+}
+
+/** Full-size enterable camp bus shell. */
 function makeBus(p: Placed, layout: Layout, colliders: Box[]): THREE.Group {
   const g = new THREE.Group(), y = terrainHeight(p.x, p.z, layout), L = 9.2, W = 3.25, H = 2.65, t = 0.16;
   g.position.set(p.x, y, p.z);
@@ -116,12 +174,10 @@ function makeBus(p: Placed, layout: Layout, colliders: Box[]): THREE.Group {
   const panel = (w: number, h: number, d: number, x: number, yy: number, z: number, mat = bodyMat) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, yy, z); m.castShadow = m.receiveShadow = true; g.add(m); return m; };
   panel(L, 0.16, W, 0, 0.08, 0, dark); panel(L, 0.16, W, 0, H, 0, trimMat);
   panel(L, H, t, 0, H / 2, W / 2, bodyMat);
-  // Door-side wall split around a 1.3m opening near the front.
   panel(5.4, H, t, -1.9, H / 2, -W / 2, bodyMat); panel(1.4, H, t, 3.9, H / 2, -W / 2, bodyMat);
   panel(t, H, W, -L / 2, H / 2, 0, bodyMat); panel(t, H, W, L / 2, H / 2, 0, bodyMat);
   for (let x = -3.1; x <= 2.6; x += 1.45) { panel(0.68, 0.48, 0.86, x, 0.48, 0.82, trimMat); panel(0.68, 0.48, 0.86, x, 0.48, -0.35, trimMat); }
-  for (let x = -3.2; x <= 2.8; x += 1.5) { const w1 = panel(0.82, 0.62, 0.035, x, 1.72, W / 2 + 0.01, dark); w1.material = dark; const w2 = panel(0.82, 0.62, 0.035, x, 1.72, -W / 2 - 0.01, dark); w2.material = dark; }
-  // Interior colliders, with the side door gap left open.
+  for (let x = -3.2; x <= 2.8; x += 1.5) { panel(0.82, 0.62, 0.035, x, 1.72, W / 2 + 0.01, dark); panel(0.82, 0.62, 0.035, x, 1.72, -W / 2 - 0.01, dark); }
   const bx0 = p.x - L / 2, bx1 = p.x + L / 2, bz0 = p.z - W / 2, bz1 = p.z + W / 2;
   pushBox(colliders, bx0, bx1, bz1 - t, bz1 + t, y, y + H);
   pushBox(colliders, bx0 - t, bx0 + t, bz0, bz1, y, y + H); pushBox(colliders, bx1 - t, bx1 + t, bz0, bz1, y, y + H);
@@ -132,6 +188,7 @@ function makeBus(p: Placed, layout: Layout, colliders: Box[]): THREE.Group {
 export function buildWorld(layout: Layout): World {
   const group = new THREE.Group(); const colliders: Box[] = []; const sizes = new Map<string, THREE.Vector3>();
   group.add(makeTerrain(layout), makeRoadOverlay(layout), makeWater(layout));
+  for (const def of LANDMARKS) group.add(makeLandmark(def, layout, colliders));
 
   const hosts: THREE.Object3D[] = [], hostBoxes: THREE.Box3[] = [];
   const place = (p: Placed) => {
