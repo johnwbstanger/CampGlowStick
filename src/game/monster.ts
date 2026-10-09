@@ -49,7 +49,13 @@ function moveTo(m: MonsterState, tx: number, tz: number, speed: number, dt: numb
   return d;
 }
 
-/** Hears recent noise, respects walls for vision, searches last-known positions and chases visible players. */
+/**
+ * Priority order:
+ * 1) visible player -> chase, always wins;
+ * 2) if sight is lost, a recent thrown-object impact can pull the monster out of search/investigate;
+ * 3) other audible noises;
+ * 4) search/wander.
+ */
 export function stepMonster(m: MonsterState, dt: number, now: number, bus: NoiseBus, prey: Prey[], active: boolean, rng: () => number = Math.random, colliders: Box[] = []): number | null {
   if (!active) { m.mode = 'idle'; return null; }
   let nearest: Prey | null = null, nd = Infinity;
@@ -59,18 +65,29 @@ export function stepMonster(m: MonsterState, dt: number, now: number, bus: Noise
     if (d < nd) { nd = d; nearest = p; }
   }
 
-  if (nearest && nd < MONSTER.catchDist && hasLineOfSight(m, nearest, colliders)) return nearest.id;
-  const visible = nearest && nd < (nearest.crouch ? MONSTER.sightCrouch : MONSTER.sight) && hasLineOfSight(m, nearest, colliders);
+  const visible = !!nearest && nd < (nearest.crouch ? MONSTER.sightCrouch : MONSTER.sight) && hasLineOfSight(m, nearest, colliders);
+  if (nearest && nd < MONSTER.catchDist && visible) return nearest.id;
   if (nearest && visible) {
     m.mode = 'chase'; m.tx = nearest.x; m.tz = nearest.z; m.timer = 3.5;
     moveTo(m, nearest.x, nearest.z, MONSTER.chaseSpeed, dt, colliders); return null;
   }
 
-  const heard = bus.loudest(now, m.x, m.z);
-  if (heard && heard.noise !== m.lastNoise && (m.mode !== 'investigate' || heard.noise.vol > (m.lastNoise?.vol ?? 0) * 0.8)) {
-    m.lastNoise = heard.noise; m.tx = heard.noise.x; m.tz = heard.noise.z; m.mode = 'investigate';
-  }
+  // Once the player is no longer visible, the chase becomes a search and can be deliberately redirected.
   if (m.mode === 'chase') { m.mode = 'search'; m.timer = 4.5; }
+
+  const thrown = bus.loudest(now, m.x, m.z, (n) => n.source === 'thrown-impact');
+  if (thrown && thrown.noise !== m.lastNoise) {
+    m.lastNoise = thrown.noise;
+    m.tx = thrown.noise.x; m.tz = thrown.noise.z;
+    m.mode = 'investigate';
+    m.timer = 5;
+  } else {
+    const heard = bus.loudest(now, m.x, m.z);
+    if (heard && heard.noise !== m.lastNoise && (m.mode !== 'investigate' || heard.noise.vol > (m.lastNoise?.vol ?? 0) * 0.8)) {
+      m.lastNoise = heard.noise; m.tx = heard.noise.x; m.tz = heard.noise.z; m.mode = 'investigate';
+    }
+  }
+
   if (m.mode === 'investigate') {
     if (moveTo(m, m.tx, m.tz, MONSTER.investigateSpeed, dt, colliders) < 1) { m.mode = 'search'; m.timer = 4; }
   } else if (m.mode === 'search') {
