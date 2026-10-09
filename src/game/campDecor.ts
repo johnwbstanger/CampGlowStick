@@ -55,7 +55,7 @@ function streetlight(x: number, z: number, layout: Layout): THREE.Group {
   return g;
 }
 
-function porchLight(x: number, z: number, y: number, parent: THREE.Group): void {
+function porchLight(x: number, y: number, z: number, parent: THREE.Group): void {
   const bulb = new THREE.Mesh(new THREE.SphereGeometry(.075, 10, 8), amber); bulb.position.set(x, y, z); parent.add(bulb);
   const light = new THREE.PointLight('#f2b766', 15, 7, 2); light.position.set(x, y - .1, z); parent.add(light);
 }
@@ -66,7 +66,6 @@ function addBusWheels(g: THREE.Group, layout: Layout): void {
   for (const lx of [-3.1, 3.0]) for (const lz of [-1.52, 1.52]) {
     const wheel = new THREE.Mesh(new THREE.CylinderGeometry(.54, .54, .28, 18), dark);
     wheel.rotation.z = Math.PI / 2;
-    // bus is placed at ~90 degrees in layout; local x becomes world z here.
     wheel.position.set(bus.x + lz, y + .52, bus.z + lx); wheel.castShadow = true; g.add(wheel);
     const hub = new THREE.Mesh(new THREE.CylinderGeometry(.22, .22, .3, 16), new THREE.MeshStandardMaterial({ color: '#888b86', metalness: .35, roughness: .5 }));
     hub.rotation.z = Math.PI / 2; hub.position.copy(wheel.position); g.add(hub);
@@ -77,19 +76,15 @@ function addBusWheels(g: THREE.Group, layout: Layout): void {
 export function buildCampDecor(layout: Layout): THREE.Group {
   const g = new THREE.Group(); g.name = 'camp-decor';
 
-  // Social spaces: tables and warm firelight.
   const tables: [number, number, number][] = [[-7, 8, .2], [7, 8, -.2], [-8, 1, -.1], [8, 1, .15], [-11, 57, .3], [3, 58, -.25], [83, -10, .4]];
   for (const t of tables) g.add(picnicTable(t[0], t[1], t[2], layout));
   for (const [x, z] of [[0, 6], [-55, 26], [50, 27], [-7, 58]] as [number, number][]) g.add(campfire(x, z, layout));
 
-  // Organized storage/hiding clusters beside cabins and service buildings.
   const stacks: [number, number, number][] = [[-79, -42, .2], [-40, -56, -.2], [22, -54, .15], [63, -38, -.25], [-65, 27, .3], [-18, 37, -.15], [44, 33, .2], [92, -28, .3], [-98, -39, -.2]];
   for (const s of stacks) g.add(crateStack(s[0], s[1], s[2], layout));
 
-  // A few deliberate path lights, not a suburban grid.
   for (const [x, z] of [[-54, 23], [-25, 13], [28, 2], [57, 11], [80, 19], [-43, -63]] as [number, number][]) g.add(streetlight(x, z, layout));
 
-  // Porch/entry lights outside selected cabins and named buildings.
   for (const s of layout.statics.filter((x) => x.name === 'cabin').filter((_, i) => i % 2 === 0)) porchLight(s.x, terrainHeight(s.x, s.z, layout) + 2.15, s.z, g);
   for (const b of LANDMARKS) porchLight(b.x, terrainHeight(b.x, b.z, layout) + 2.35, b.z + b.d * .52, g);
 
