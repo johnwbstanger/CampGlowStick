@@ -6,11 +6,11 @@ import { DAY_SECONDS, PLAYER, REACH } from './constants';
 import { GLOW_MASS, propInfo } from './items';
 import type { Layout } from './layout';
 import { newMonster, stepMonster } from './monster';
-import { NoiseBus, VOLUME, impactVolume, stepVolume, type Noise } from './noise';
+import { NoiseBus, VOLUME, impactVolume, stepVolume, type Noise, type NoiseSource } from './noise';
 import { terrainHeight } from './terrain';
 
 interface SimPlayer { state: PlayerState; alive: boolean; stepT: number }
-interface SimItem { def: ItemDef; body: CANNON.Body; mass: number; holder: number; lastHit: number; halfY: number }
+interface SimItem { def: ItemDef; body: CANNON.Body; mass: number; holder: number; lastHit: number; halfY: number; thrownAt: number }
 interface SimCamper { id: number; x: number; y: number; z: number; foundBy: number; rescued: boolean }
 export interface Sizes { get(model: string): { x: number; y: number; z: number } | undefined }
 
@@ -80,17 +80,23 @@ export class HostSim {
     const halfY = Math.max(0.02, sz.y / 2);
     const body = new CANNON.Body({ mass, shape: new CANNON.Box(new CANNON.Vec3(Math.max(0.02, sz.x / 2), halfY, Math.max(0.02, sz.z / 2))), linearDamping: 0.13, angularDamping: 0.38, sleepSpeedLimit: 0.18, sleepTimeLimit: 0.45 });
     body.position.set(x, y, z);
-    const it: SimItem = { def, body, mass, holder: -1, lastHit: 0, halfY };
+    const it: SimItem = { def, body, mass, holder: -1, lastHit: 0, halfY, thrownAt: -Infinity };
     body.addEventListener('collide', (e: { contact: CANNON.ContactEquation }) => {
       const v = Math.abs(e.contact.getImpactVelocityAlongNormal());
-      if (v < 1.4 || this.time - it.lastHit < 0.3 || def.kind === 'glow') return;
-      it.lastHit = this.time; this.noise(body.position.x, body.position.z, impactVolume(v, mass), def.mat);
+      if (v < 1.4 || this.time - it.lastHit < 0.3) return;
+      it.lastHit = this.time;
+      const recentlyThrown = this.time - it.thrownAt < 3;
+      const source: NoiseSource = recentlyThrown ? 'thrown-impact' : 'impact';
+      // A deliberately thrown object should be a useful distraction. Its landing/crash is louder
+      // than incidental clutter movement, and the sound originates where the object actually hits.
+      const vol = impactVolume(v, mass) * (recentlyThrown ? 1.35 : 1);
+      this.noise(body.position.x, body.position.z, Math.min(VOLUME.crash, vol), def.mat, source);
     });
     this.world.addBody(body); this.items.set(def.id, it); return it;
   }
 
-  private noise(x: number, z: number, vol: number, mat: string): void {
-    const n = { x: r2(x), z: r2(z), vol: r2(vol), mat, t: this.time };
+  private noise(x: number, z: number, vol: number, mat: string, source?: NoiseSource): void {
+    const n: Noise = { x: r2(x), z: r2(z), vol: r2(vol), mat, t: this.time, source };
     this.bus.emit(n); if (mat !== 'step') this.fresh.push(n);
   }
 
@@ -126,7 +132,7 @@ export class HostSim {
       if (d < bd && (d < 1.15 || facing > 0.35)) { best = c; bd = d; }
     }
     if (!best) return false;
-    best.foundBy = id; this.noise(best.x, best.z, 0.8, 'step'); return true;
+    best.foundBy = id; this.noise(best.x, best.z, 0.8, 'step', 'interaction'); return true;
   }
 
   private pickup(id: number, pl: SimPlayer): void {
@@ -142,7 +148,7 @@ export class HostSim {
 
   private hold(id: number, pl: SimPlayer, it: SimItem): void {
     it.holder = id; pl.state.held = it.def.id; it.body.type = CANNON.Body.KINEMATIC; it.body.mass = 0; it.body.updateMassProperties();
-    it.body.velocity.setZero(); it.body.angularVelocity.setZero(); this.noise(it.body.position.x, it.body.position.z, 0.6, it.def.mat === 'glass' ? 'plastic' : it.def.mat);
+    it.body.velocity.setZero(); it.body.angularVelocity.setZero(); this.noise(it.body.position.x, it.body.position.z, 0.6, it.def.mat === 'glass' ? 'plastic' : it.def.mat, 'interaction');
   }
 
   private release(id: number, thrown: boolean, force = 0.35): void {
@@ -151,14 +157,20 @@ export class HostSim {
     it.holder = -1; it.body.type = CANNON.Body.DYNAMIC; it.body.mass = it.mass; it.body.updateMassProperties(); it.body.wakeUp();
     const [fx, fz] = this.forward(pl), charge = Math.max(0, Math.min(1, force)), sp = thrown ? 7 + charge * 10 : 1.0;
     it.body.velocity.set(fx * sp, thrown ? 2.2 + charge * 4.2 : 0.35, fz * sp);
-    if (thrown) { it.body.angularVelocity.set(Math.random() * 6 - 3, Math.random() * 6 - 3, Math.random() * 6 - 3); this.noise(pl.state.p[0], pl.state.p[2], VOLUME.throw * (0.65 + charge * 0.55), 'step'); }
+    if (thrown) {
+      it.thrownAt = this.time;
+      it.body.angularVelocity.set(Math.random() * 6 - 3, Math.random() * 6 - 3, Math.random() * 6 - 3);
+      // Small hand-release sound can be heard nearby, but the monster's distraction priority is
+      // reserved for the actual thrown-impact event at the landing point.
+      this.noise(pl.state.p[0], pl.state.p[2], VOLUME.throw * 0.35, 'step', 'step');
+    }
   }
 
   private snap(id: number, pl: SimPlayer, color: string): void {
     if ([...this.items.values()].filter((i) => i.def.kind === 'glow').length >= MAX_GLOW) return;
     const def: ItemDef = { id: this.nextId++, model: 'glowstick', kind: 'glow', color, mat: 'glow' };
     const [fx, fz] = this.forward(pl); const it = this.addItem(def, pl.state.p[0] + fx * 0.6, pl.state.p[1] + 1.2, pl.state.p[2] + fz * 0.6);
-    this.net.broadcast({ t: 'spawn', def }); this.noise(pl.state.p[0], pl.state.p[2], 1, 'glow'); if (pl.state.held < 0) this.hold(id, pl, it);
+    this.net.broadcast({ t: 'spawn', def }); this.noise(pl.state.p[0], pl.state.p[2], 1, 'glow', 'glow'); if (pl.state.held < 0) this.hold(id, pl, it);
   }
 
   private stepCampers(dt: number): void {
@@ -171,7 +183,7 @@ export class HostSim {
       const dx = tx - c.x, dz = tz - c.z, d = Math.hypot(dx, dz);
       if (d > 0.15) { const s = Math.min(d, 4.2 * dt); c.x += dx / d * s; c.z += dz / d * s; }
       c.y = terrainHeight(c.x, c.z, this.layout);
-      if (this.inBusZone(c.x, c.z)) { c.rescued = true; c.foundBy = -1; this.rescued++; this.noise(c.x, c.z, 0.7, 'step'); }
+      if (this.inBusZone(c.x, c.z)) { c.rescued = true; c.foundBy = -1; this.rescued++; this.noise(c.x, c.z, 0.7, 'step', 'interaction'); }
     }
   }
 
@@ -180,7 +192,7 @@ export class HostSim {
     this.time += dt; if (!this.night && this.time > DAY_SECONDS) this.night = true;
     for (const pl of this.players.values()) {
       const s = pl.state;
-      if (pl.alive && (pl.stepT -= dt) <= 0) { const v = stepVolume(s.moving, s.crouch, s.sprint); if (v > 0) this.noise(s.p[0], s.p[2], v, 'step'); pl.stepT = s.sprint ? 0.3 : 0.5; }
+      if (pl.alive && (pl.stepT -= dt) <= 0) { const v = stepVolume(s.moving, s.crouch, s.sprint); if (v > 0) this.noise(s.p[0], s.p[2], v, 'step', 'step'); pl.stepT = s.sprint ? 0.3 : 0.5; }
       const it = s.held >= 0 ? this.items.get(s.held) : undefined;
       if (it) { const [fx, fz] = this.forward(pl), eye = s.crouch ? PLAYER.crouchEye : PLAYER.eye; it.body.position.set(s.p[0] + fx * 0.7, s.p[1] + eye - 0.35, s.p[2] + fz * 0.7); it.body.velocity.setZero(); }
       else if (s.held >= 0) s.held = -1;
@@ -201,7 +213,7 @@ export class HostSim {
     const ex = this.layout.extraction;
     for (const it of [...this.items.values()]) {
       if (it.def.kind !== 'loot' || it.holder >= 0) continue;
-      if (Math.hypot(it.body.position.x - ex.x, it.body.position.z - ex.z) < ex.r) { this.world.removeBody(it.body); this.items.delete(it.def.id); this.collected++; this.noise(ex.x, ex.z, 1, 'metal'); }
+      if (Math.hypot(it.body.position.x - ex.x, it.body.position.z - ex.z) < ex.r) { this.world.removeBody(it.body); this.items.delete(it.def.id); this.collected++; this.noise(ex.x, ex.z, 1, 'metal', 'impact'); }
     }
 
     if (!this.over) {
