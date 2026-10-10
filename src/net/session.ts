@@ -18,6 +18,9 @@ export class NetError extends Error { constructor(public kind: NetErrorKind) { s
 
 const CONNECT_TIMEOUT = 12000;
 const HEARTBEAT_MS = 2500;
+// World snapshots are disposable state, not events. If a browser/iPad falls behind, sending more
+// old snapshots makes latency grow without bound; skip them until the reliable channel drains.
+const SNAPSHOT_BUFFER_LIMIT = 160 * 1024;
 const SIGNALING_ERRORS = new Set(['network', 'server-error', 'socket-error', 'socket-closed', 'browser-incompatible', 'ssl-unavailable']);
 export const clampCap = (n: number): number => Math.min(MAX_CAP, Math.max(MIN_CAP, Math.floor(n) || MAX_CAP));
 
@@ -208,6 +211,10 @@ export class Session {
 
   private safeSend(conn: DataConnection, msg: Msg): void {
     if (!conn.open) return;
+    if (msg.t === 's') {
+      const dc = (conn as unknown as { dataChannel?: { bufferedAmount?: number } }).dataChannel;
+      if ((dc?.bufferedAmount ?? 0) > SNAPSHOT_BUFFER_LIMIT) return;
+    }
     try { conn.send(msg); } catch (e) { console.warn('[net] send failed', e); }
   }
 
