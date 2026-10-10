@@ -34,9 +34,6 @@ export class Voice {
         : s.players.find((p) => p.peer === call.peer)?.id;
       if (typeof id === 'number') this.peerToPlayer.set(call.peer, id);
 
-      // Do not answer a media call until this side has an actual live microphone track. A queued
-      // call is answered immediately from enable(); if it goes stale PeerJS closes it and the
-      // deterministic caller retries on the reconciliation interval.
       if (!this.stream?.active) {
         this.pendingIncoming.get(call.peer)?.close();
         this.pendingIncoming.set(call.peer, call);
@@ -65,9 +62,6 @@ export class Voice {
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false,
       });
-
-      // Announce readiness only after getUserMedia succeeds. Other players will now place their
-      // canonical calls, so every answered call has a live stream on both sides.
       this.s.setVoiceReady(true);
       for (const [peerId, call] of [...this.pendingIncoming]) {
         this.pendingIncoming.delete(peerId);
@@ -108,8 +102,6 @@ export class Voice {
     if (!p || p.peer === this.s.peer.id) return;
     this.peerToPlayer.set(p.peer, p.id);
     if (this.calls.has(p.peer) || this.pendingIncoming.has(p.peer)) return;
-
-    // One deterministic caller per pair avoids doubled audio while still allowing automatic retry.
     if (this.s.myId > p.id) return;
     const call = this.s.peer.call(p.peer, this.stream, { metadata: { playerId: this.s.myId } });
     if (call) this.attach(call);
@@ -133,12 +125,11 @@ export class Voice {
       a.createMediaStreamSource(remote).connect(panner).connect(a.destination);
       this.panners.set(call.peer, panner);
 
-      // Safari is more reliable when the remote MediaStream is also attached to a media element.
-      // It remains muted because WebAudio supplies the audible spatialised path.
       let el = this.mediaEls.get(call.peer);
       if (!el) {
         el = document.createElement('audio');
-        el.autoplay = true; el.muted = true; el.playsInline = true;
+        el.autoplay = true; el.muted = true;
+        el.setAttribute('playsinline', '');
         el.dataset.voicePeer = call.peer;
         el.style.display = 'none';
         document.body.append(el); this.mediaEls.set(call.peer, el);
