@@ -1,6 +1,5 @@
 // Focused end-to-end smoke test for Camp Glowstick.
-// Uses a local PeerJS signaling server in CI and validates the core multiplayer/gameplay loop
-// without booting a second full game world after the first one has already loaded.
+// Uses a local PeerJS signaling server in CI and validates multiplayer, voice and the core gameplay loop.
 import { existsSync } from 'node:fs';
 import { chromium } from 'playwright';
 import { build, preview } from 'vite';
@@ -68,11 +67,25 @@ try {
     for (const p of [H, g1, g2]) await waitPlayers(p, 3);
   });
 
+  await check('proximity voice survives different enable order', async () => {
+    // Deliberately stagger the toggles: this reproduces the common iPad/phone case that used to
+    // create a receive-only PeerJS call when the later player had no microphone stream yet.
+    await H.check('#voice-toggle'); await sleep(350);
+    await g1.check('#voice-toggle'); await sleep(350);
+    await g2.check('#voice-toggle');
+    await sleep(2400);
+    for (const p of [H, g1, g2]) {
+      await p.waitForFunction(() => document.querySelectorAll('audio').length >= 1, null, { timeout: 12000 });
+      assert(await p.isChecked('#voice-toggle'), `${p.label} voice toggle did not stay enabled`);
+    }
+  });
+
   await check('all three clients enter the same game world', async () => {
     await startGame(H, [g1, g2]);
     for (const p of [H, g1, g2]) {
       assert(await p.locator('canvas.game').count() === 1, 'missing game canvas');
       assert((await cg(p, () => window.__cg.missingModels())) === 0, 'placeholder models in scene');
+      assert(await p.locator('audio').count() >= 1, 'voice media element disappeared after game load');
     }
   });
 
@@ -90,13 +103,28 @@ try {
 
   await check('camper interaction syncs without loading a second world', async () => {
     const camper = (await cg(H, () => window.__cg.campers()))[0]; assert(camper, 'camper exists');
-    // Face the camper by standing just south of it and looking north (yaw = PI).
     await H.evaluate(([x, z]) => { window.__cg.teleport(x, z + .55); window.__cg.look(Math.PI); }, [camper.x, camper.z]);
     await sleep(500);
     await H.evaluate(() => window.__cg.act('pick'));
     for (const p of [H, g1, g2]) {
       await p.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 10000 });
     }
+  });
+
+  await check('found camper follows and boards the bus', async () => {
+    const camper = (await cg(H, () => window.__cg.campers()))[0];
+    const before = { x: camper.x, z: camper.z };
+    // Walk the test counselor in two moderate hops rather than teleporting across the whole world;
+    // this exercises the follower catch-up behavior without asking it to violate its range rule.
+    await H.evaluate(([x, z]) => window.__cg.teleport(x + 4, z + 2), [before.x, before.z]);
+    await sleep(1800);
+    let moved = (await cg(H, () => window.__cg.campers()))[0];
+    assert(Math.hypot(moved.x - before.x, moved.z - before.z) > 1, 'camper did not follow rescuer');
+    await H.evaluate(() => window.__cg.teleport(28, 2));
+    // The catch-up speed is intentionally bounded, so give the follower a short real simulation window.
+    await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.rescued), camper.id, { timeout: 18000 });
+    moved = (await cg(H, () => window.__cg.campers()))[0];
+    assert(moved.rescued, 'camper never boarded bus');
   });
 
   await check('charged thrown object/glowstick synchronizes', async () => {
