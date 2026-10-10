@@ -1,4 +1,4 @@
-export const TICK_HZ = 20;
+export const TICK_HZ = 15;
 export const TICK_MS = 1000 / TICK_HZ;
 export const MIN_CAP = 4;
 export const MAX_CAP = 15;
