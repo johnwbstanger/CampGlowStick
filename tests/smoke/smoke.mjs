@@ -58,7 +58,7 @@ async function startGame(h, guests) {
     await p.waitForSelector('#arrival-briefing', { timeout: 10000 });
     const text = await p.innerText('#arrival-briefing');
     assert(text.includes('GARY') && text.includes('scratching') && text.includes('gun'), `${p.label} missing Gary briefing content`);
-    await p.click('#btn-arrive');
+    await p.locator('#btn-arrive').evaluate((el) => el.click());
   }
   await Promise.all([h, ...guests].map((p) => p.waitForFunction(() => window.__cg?.ready && window.__cg.frames() > 5, null, { timeout: 90000 })));
 }
@@ -73,6 +73,14 @@ try {
     for (const p of [H, g1, g2]) await waitPlayers(p, 3);
   });
 
+  await check('lobby surfaces connection diagnostics', async () => {
+    await g1.waitForFunction(() => /\d+ ms RTT/.test(document.querySelector('#lobby-diagnostics')?.textContent ?? ''), null, { timeout: 8000 });
+    const hostDiag = await H.innerText('#lobby-diagnostics');
+    const guestDiag = await g1.innerText('#lobby-diagnostics');
+    assert(hostDiag.includes('Connection: HOST'), `host diagnostics missing: ${hostDiag}`);
+    assert(/\d+ ms RTT/.test(guestDiag), `guest RTT missing: ${guestDiag}`);
+  });
+
   await check('proximity voice survives different enable order', async () => {
     await H.check('#voice-toggle'); await sleep(350);
     await g1.check('#voice-toggle'); await sleep(350);
@@ -81,6 +89,7 @@ try {
     for (const p of [H, g1, g2]) {
       await p.waitForFunction(() => document.querySelectorAll('audio').length >= 1, null, { timeout: 12000 });
       assert(await p.isChecked('#voice-toggle'), `${p.label} voice toggle did not stay enabled`);
+      await p.waitForFunction(() => document.querySelector('#lobby-diagnostics')?.textContent?.includes('Voice ready: 3/3'), null, { timeout: 5000 });
     }
   });
 
