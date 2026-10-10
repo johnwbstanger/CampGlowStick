@@ -5,6 +5,10 @@ export interface AssetDef { file: string; h?: number; w?: number }
 const k = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/${file}.glb`, ...fit });
 const CHARS = 'abcdefgh'.split('');
 
+/**
+ * Every path below is a committed asset, not a generated placeholder. The environment uses
+ * CC0 Kenney / Quaternius-derived game assets already credited in public/assets/CREDITS.md.
+ */
 export const MANIFEST = {
   ...Object.fromEntries(CHARS.map((c, i) => [`camper${i + 1}`, k(`blocky-characters/character-${c}`, { h: 1.7 })])),
   monster: k('graveyard/character-zombie', { h: 2.2 }),
@@ -13,7 +17,9 @@ export const MANIFEST = {
   bunk: k('furniture/bedBunk', { w: 2.2 }),
   cooler: k('survival/box-large', { w: 0.7 }),
   crate: k('survival/box', { w: 0.55 }),
+  bigCrate: k('survival/box-large', { w: 0.9 }),
   backpack: k('survival/bedroll-packed', { w: 0.6 }),
+  bedroll: k('survival/bedroll-packed', { w: 0.72 }),
   lantern: k('holiday/lantern', { h: 0.5 }),
   tent: k('nature/tent_detailedClosed', { w: 3.2 }),
   tree: k('nature/tree_pineTallA', { h: 7 }),
@@ -34,6 +40,8 @@ export const MANIFEST = {
   rock: k('nature/rock_largeA', { w: 2.2 }),
   boulder: k('survival/rock-a', { w: 1.6 }),
   sign: k('survival/signpost', { h: 1.4 }),
+  campStructure: k('survival/structure', { w: 7 }),
+  metalStructure: k('survival/structure-metal', { w: 5 }),
   bus: k('car/van', { w: 6 }),
   ground: k('nature/ground_grass', { w: 4 }),
 } satisfies Record<string, AssetDef>;
