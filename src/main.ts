@@ -15,11 +15,14 @@ const params = new URLSearchParams(location.search);
 let session: Session | null = null;
 let game: Game | null = null;
 
+declare global { interface Window { __cgSession?: Session } }
+
 addEventListener('pagehide', () => session?.leave());
 
 function toMenu(error?: NetErrorKind | string): void {
   game?.dispose(); game = null;
   session?.leave(); session = null;
+  delete window.__cgSession;
   const ui = showMenu(root, {
     onHost: async (name, cap) => {
       ui.busy(true); ui.setError('');
@@ -34,6 +37,9 @@ function toMenu(error?: NetErrorKind | string): void {
 
 function enterLobby(s: Session): void {
   session = s;
+  // The browser smoke suite runs on localhost and needs to close exactly one data transport to
+  // exercise the production reconnect path. Never expose the session object on deployed Pages.
+  if (location.hostname === '127.0.0.1' || location.hostname === 'localhost') window.__cgSession = s;
   click();
   let voice: Voice | null = null;
   s.onClosed = (kind) => toMenu(kind);
