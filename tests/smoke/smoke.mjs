@@ -107,6 +107,17 @@ try {
     await H.waitForFunction(() => { const r = window.__cg.remote(1); return r && Math.abs(r.tx - 8) < .1 && Math.abs(r.tz - 10) < .1; }, null, { timeout: 8000 });
   });
 
+  await check('guest transparently reconnects to an active round', async () => {
+    const id = await g1.evaluate(() => window.__cgSession.myId);
+    await g1.evaluate(() => window.__cgSession.disconnectTransportForTest());
+    await g1.waitForFunction(() => window.__cgSession.reconnecting === true, null, { timeout: 4000 });
+    await g1.waitForFunction(() => window.__cgSession.reconnecting === false, null, { timeout: 12000 });
+    assert((await g1.evaluate(() => window.__cgSession.myId)) === id, 'reconnect changed player id');
+    await g1.evaluate(() => window.__cg.teleport(11, 14));
+    await H.waitForFunction((id) => { const r = window.__cg.remote(id); return r && Math.abs(r.tx - 11) < .1 && Math.abs(r.tz - 14) < .1; }, id, { timeout: 8000 });
+    assert((await H.evaluate(() => window.__cgSession.players.length)) === 3, 'host roster duplicated/dropped reconnecting guest');
+  });
+
   await check('terrain, lake and seven campers render', async () => {
     const campers = await cg(H, () => window.__cg.campers());
     assert(campers.length === 7, `expected 7 campers, got ${campers.length}`);
@@ -182,6 +193,24 @@ try {
       assert((await cg(p, () => window.__cg.campers())).length === 7, 'replay did not rebuild camper round state');
     }
     assert(H.url() === before[0] && g1.url() === before[1] && g2.url() === before[2], 'replay navigated/reloaded a client');
+  });
+
+  await check('successful rescue produces camper-safe bus departure outro', async () => {
+    for (let n = 0; n < 7; n++) {
+      const campers = await cg(H, () => window.__cg.campers());
+      const camper = campers.find((c) => !c.rescued && c.foundBy < 0);
+      if (!camper) break;
+      await H.evaluate(([x, z]) => { window.__cg.teleport(x, z + .55); window.__cg.look(Math.PI); }, [camper.x, camper.z]);
+      await sleep(180);
+      await H.evaluate(() => window.__cg.act('pick'));
+      await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 5000 });
+      await H.evaluate(() => window.__cg.teleport(28, 2));
+      await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.rescued), camper.id, { timeout: 8000 });
+    }
+    await H.waitForFunction(() => window.__cg.snap()?.over === 'win', null, { timeout: 8000 });
+    await H.waitForSelector('#hud-result .outro-bus', { timeout: 5000 });
+    assert((await H.innerText('#hud-result')).includes('HEADCOUNT 7 / 7'), 'outro missing seven-camper headcount');
+    for (const p of [g1, g2]) await p.waitForFunction(() => window.__cg.snap()?.over === 'win', null, { timeout: 8000 });
   });
 
   await check('no console errors', async () => { assert(consoleErrors.length === 0, consoleErrors.slice(0, 6).join(' | ')); });
