@@ -1,93 +1,130 @@
 import * as THREE from 'three';
+import { getModel } from '../assets/loader';
+import type { AssetName } from '../assets/manifest';
 import type { Layout } from './layout';
-import { terrainHeight } from './terrain';
 import { LANDMARKS } from './landmarks';
+import { terrainHeight } from './terrain';
 
-const wood = new THREE.MeshStandardMaterial({ color: '#6b4a32', roughness: .96 });
-const dark = new THREE.MeshStandardMaterial({ color: '#24282a', roughness: .72 });
-const amber = new THREE.MeshStandardMaterial({ color: '#f1a446', emissive: '#f08a2b', emissiveIntensity: 3.5, roughness: .45 });
-const stone = new THREE.MeshStandardMaterial({ color: '#6f7169', roughness: 1 });
+type Spot = { name: AssetName; x: number; z: number; rot?: number; scale?: number; y?: number };
 
-function box(w: number, h: number, d: number, mat: THREE.Material): THREE.Mesh {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.castShadow = m.receiveShadow = true; return m;
+function imported(spot: Spot, layout: Layout): THREE.Object3D {
+  const o = getModel(spot.name);
+  const s = spot.scale ?? 1;
+  o.scale.multiplyScalar(s);
+  o.position.set(spot.x, terrainHeight(spot.x, spot.z, layout) + (spot.y ?? 0), spot.z);
+  o.rotation.y = spot.rot ?? 0;
+  o.name = `decor-${spot.name}`;
+  o.traverse((n) => {
+    if (n instanceof THREE.Mesh) {
+      n.castShadow = true;
+      n.receiveShadow = true;
+    }
+  });
+  return o;
 }
-function cyl(r: number, h: number, mat: THREE.Material, seg = 12): THREE.Mesh {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, seg), mat); m.castShadow = m.receiveShadow = true; return m;
+
+function addWarmLight(parent: THREE.Group, x: number, z: number, y = 1.3, strength = 18, distance = 8): void {
+  const light = new THREE.PointLight('#f0a85f', strength, distance, 2);
+  light.position.set(x, terrainHeight(x, z) + y, z);
+  parent.add(light);
 }
 
-function picnicTable(x: number, z: number, rot: number, layout: Layout): THREE.Group {
-  const g = new THREE.Group(); g.position.set(x, terrainHeight(x, z, layout), z); g.rotation.y = rot;
-  const top = box(2.5, .12, .82, wood); top.position.y = .78; g.add(top);
-  for (const side of [-1, 1]) {
-    const bench = box(2.5, .11, .34, wood); bench.position.set(0, .46, side * .86); g.add(bench);
-    for (const x0 of [-.82, .82]) { const leg = box(.12, .68, .12, dark); leg.position.set(x0, .38, side * .48); leg.rotation.z = side * .22; g.add(leg); }
+function campfire(g: THREE.Group, layout: Layout, x: number, z: number): void {
+  g.add(imported({ name: 'campfire', x, z }, layout));
+  g.add(imported({ name: 'logs', x: x + 1.25, z: z + .3, rot: .35, scale: .8 }, layout));
+  addWarmLight(g, x, z, .8, 34, 11);
+}
+
+function lantern(g: THREE.Group, layout: Layout, x: number, z: number, y = .82): void {
+  g.add(imported({ name: 'lantern', x, z, y, scale: .72 }, layout));
+  addWarmLight(g, x, z, y + .18, 10, 5.5);
+}
+
+/**
+ * Authored prop cluster: the randomness is only small rotation/offset variation inside a
+ * human-designed use zone. Props are never sprayed globally across the camp.
+ */
+function supplyCluster(g: THREE.Group, layout: Layout, x: number, z: number, rot = 0, variant = 0): void {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  const local = (name: AssetName, dx: number, dz: number, r = 0, scale = 1) => {
+    const wx = x + dx * c - dz * s, wz = z + dx * s + dz * c;
+    g.add(imported({ name, x: wx, z: wz, rot: rot + r, scale }, layout));
+  };
+  local('bigCrate', 0, 0, .05, 1.05);
+  local('crate', .68, .08, -.1, .95);
+  local('cooler', -.72, .13, .08, 1.0);
+  local('bedroll', .15, -.68, .4, .9);
+  if (variant % 2 === 0) local('bucket', -.15, .72, -.2, .9);
+  else local('barrel', -.18, .82, .1, .72);
+  if (variant % 3 === 0) local('bottle', .62, -.62, .22, .92);
+}
+
+function cabinLife(g: THREE.Group, layout: Layout): void {
+  const cabins = layout.statics.filter((s) => s.name === 'cabin');
+  cabins.forEach((cab, i) => {
+    // Bed/bunk is centered toward the rear of the structure, leaving the doorway clear.
+    const fwdX = Math.sin(cab.rot), fwdZ = Math.cos(cab.rot);
+    const rightX = Math.cos(cab.rot), rightZ = -Math.sin(cab.rot);
+    const backX = cab.x - fwdX * 1.55, backZ = cab.z - fwdZ * 1.55;
+    g.add(imported({ name: 'bunk', x: backX + rightX * 1.25, z: backZ + rightZ * 1.25, rot: cab.rot + Math.PI / 2, scale: .86 }, layout));
+    if (i % 2 === 0) g.add(imported({ name: 'bedroll', x: backX - rightX * 1.15, z: backZ - rightZ * 1.15, rot: cab.rot, scale: .85 }, layout));
+
+    // Porch gear reads as something counselors actually left there, not level-editor scatter.
+    const porchX = cab.x + fwdX * 3.1, porchZ = cab.z + fwdZ * 3.1;
+    g.add(imported({ name: 'cooler', x: porchX + rightX * .7, z: porchZ + rightZ * .7, rot: cab.rot, scale: .9 }, layout));
+    if (i % 3 === 0) g.add(imported({ name: 'crate', x: porchX - rightX * .55, z: porchZ - rightZ * .55, rot: cab.rot + .1, scale: .9 }, layout));
+    if (i % 2 === 0) lantern(g, layout, porchX, porchZ, .72);
+  });
+}
+
+function waterfront(g: THREE.Group, layout: Layout): void {
+  const w = layout.water;
+  const shoreX = w.x - w.rx - 4;
+  for (let i = 0; i < 3; i++) {
+    g.add(imported({ name: 'canoe', x: shoreX - i * 1.35, z: w.z - 4 + i * 2.0, rot: Math.PI / 2 + i * .05, scale: .92 }, layout));
+    g.add(imported({ name: 'paddle', x: shoreX - .6 - i * 1.25, z: w.z - 2.9 + i * 2.0, rot: Math.PI / 2 + .12, scale: 1.0 }, layout));
   }
-  return g;
+  supplyCluster(g, layout, shoreX - 3, w.z + 5, -.3, 2);
+  g.add(imported({ name: 'sign', x: shoreX - 1.5, z: w.z - 8, rot: Math.PI / 2 }, layout));
 }
 
-function crateStack(x: number, z: number, rot: number, layout: Layout): THREE.Group {
-  const g = new THREE.Group(); g.position.set(x, terrainHeight(x, z, layout), z); g.rotation.y = rot;
-  for (let i = 0; i < 4; i++) {
-    const c = box(.65 + (i % 2) * .08, .5, .6, new THREE.MeshStandardMaterial({ color: i % 2 ? '#806044' : '#9a724f', roughness: 1 }));
-    c.position.set((i % 2) * .48, .25 + Math.floor(i / 2) * .52, (i % 3) * .18); c.rotation.y = (i % 2 ? .12 : -.08); g.add(c);
-  }
-  const cooler = box(.78, .46, .5, new THREE.MeshStandardMaterial({ color: '#d8e1d9', roughness: .8 })); cooler.position.set(-.62, .23, .15); g.add(cooler);
-  return g;
+function activityZones(g: THREE.Group, layout: Layout): void {
+  // Dining / central social area: food and radio live together rather than floating in a field.
+  const dining: Spot[] = [
+    { name: 'bigCrate', x: -8.4, z: 8.7, rot: .15 },
+    { name: 'cooler', x: -7.4, z: 8.8, rot: -.08 },
+    { name: 'mug', x: -6.8, z: 8.4, rot: .3 },
+    { name: 'radio', x: 7.2, z: 8.2, rot: -.2 },
+    { name: 'bottle', x: 7.7, z: 8.65 },
+  ];
+  dining.forEach((p) => g.add(imported(p, layout)));
+
+  // Maintenance / service clusters.
+  [[-79, -42, .2], [-40, -56, -.2], [22, -54, .15], [63, -38, -.25], [-98, -39, -.2]].forEach((p, i) =>
+    supplyCluster(g, layout, p[0], p[1], p[2], i)
+  );
+
+  // Campsite clusters: sleeping gear, supplies and local firewood.
+  [[-55, 26, .2], [50, 27, -.2], [-7, 58, .1]].forEach((p, i) => {
+    supplyCluster(g, layout, p[0] + 2.1, p[1] + 1.2, p[2], i + 3);
+    g.add(imported({ name: 'bedroll', x: p[0] - 2.2, z: p[1] + .8, rot: p[2] + .4 }, layout));
+  });
 }
 
-function campfire(x: number, z: number, layout: Layout): THREE.Group {
-  const g = new THREE.Group(); const y = terrainHeight(x, z, layout); g.position.set(x, y, z);
-  for (let i = 0; i < 10; i++) {
-    const a = (i / 10) * Math.PI * 2, s = cyl(.16, .34, stone, 8); s.rotation.z = Math.PI / 2; s.position.set(Math.cos(a) * .72, .12, Math.sin(a) * .72); s.rotation.y = a; g.add(s);
-  }
-  for (const r of [-.42, .42]) { const log = cyl(.11, 1.1, wood, 9); log.rotation.z = Math.PI / 2; log.rotation.y = r > 0 ? .65 : -.65; log.position.y = .18; g.add(log); }
-  const flame = new THREE.Mesh(new THREE.SphereGeometry(.22, 12, 8), amber); flame.scale.set(.8, 1.8, .8); flame.position.y = .45; g.add(flame);
-  const light = new THREE.PointLight('#ff9a38', 54, 12, 2); light.position.y = 1.15; g.add(light);
-  return g;
-}
-
-function streetlight(x: number, z: number, layout: Layout): THREE.Group {
-  const g = new THREE.Group(); g.position.set(x, terrainHeight(x, z, layout), z);
-  const pole = cyl(.07, 3.6, dark, 10); pole.position.y = 1.8; g.add(pole);
-  const arm = box(.75, .07, .07, dark); arm.position.set(.32, 3.47, 0); g.add(arm);
-  const lamp = new THREE.Mesh(new THREE.SphereGeometry(.13, 12, 8), amber); lamp.position.set(.66, 3.3, 0); g.add(lamp);
-  const light = new THREE.PointLight('#efad62', 28, 11, 2); light.position.set(.66, 3.15, 0); g.add(light);
-  return g;
-}
-
-function porchLight(x: number, y: number, z: number, parent: THREE.Group): void {
-  const bulb = new THREE.Mesh(new THREE.SphereGeometry(.075, 10, 8), amber); bulb.position.set(x, y, z); parent.add(bulb);
-  const light = new THREE.PointLight('#f2b766', 15, 7, 2); light.position.set(x, y - .1, z); parent.add(light);
-}
-
-function addBusWheels(g: THREE.Group, layout: Layout): void {
-  const bus = layout.statics.find((s) => s.name === 'bus'); if (!bus) return;
-  const y = terrainHeight(bus.x, bus.z, layout);
-  for (const lx of [-3.1, 3.0]) for (const lz of [-1.52, 1.52]) {
-    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(.54, .54, .28, 18), dark);
-    wheel.rotation.z = Math.PI / 2;
-    wheel.position.set(bus.x + lz, y + .52, bus.z + lx); wheel.castShadow = true; g.add(wheel);
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(.22, .22, .3, 16), new THREE.MeshStandardMaterial({ color: '#888b86', metalness: .35, roughness: .5 }));
-    hub.rotation.z = Math.PI / 2; hub.position.copy(wheel.position); g.add(hub);
-  }
-}
-
-/** Visual organization pass: repeated camp-use zones instead of random scatter. */
+/** Asset-first world dressing using shipped CC0 models instead of procedural boxes/cylinders. */
 export function buildCampDecor(layout: Layout): THREE.Group {
-  const g = new THREE.Group(); g.name = 'camp-decor';
+  const g = new THREE.Group();
+  g.name = 'camp-decor-imported';
 
-  const tables: [number, number, number][] = [[-7, 8, .2], [7, 8, -.2], [-8, 1, -.1], [8, 1, .15], [-11, 57, .3], [3, 58, -.25], [83, -10, .4]];
-  for (const t of tables) g.add(picnicTable(t[0], t[1], t[2], layout));
-  for (const [x, z] of [[0, 6], [-55, 26], [50, 27], [-7, 58]] as [number, number][]) g.add(campfire(x, z, layout));
+  cabinLife(g, layout);
+  activityZones(g, layout);
+  waterfront(g, layout);
 
-  const stacks: [number, number, number][] = [[-79, -42, .2], [-40, -56, -.2], [22, -54, .15], [63, -38, -.25], [-65, 27, .3], [-18, 37, -.15], [44, 33, .2], [92, -28, .3], [-98, -39, -.2]];
-  for (const s of stacks) g.add(crateStack(s[0], s[1], s[2], layout));
+  for (const [x, z] of [[0, 6], [-55, 26], [50, 27], [-7, 58]] as [number, number][]) campfire(g, layout, x, z);
 
-  for (const [x, z] of [[-54, 23], [-25, 13], [28, 2], [57, 11], [80, 19], [-43, -63]] as [number, number][]) g.add(streetlight(x, z, layout));
+  // Warm lantern pools belong at paths/building thresholds; no generic sci-fi streetlights.
+  for (const [x, z] of [[-54, 23], [-25, 13], [28, 2], [57, 11], [80, 19], [-43, -63]] as [number, number][]) lantern(g, layout, x, z, .72);
+  for (const b of LANDMARKS) lantern(g, layout, b.x, b.z + b.d * .52, .78);
 
-  for (const s of layout.statics.filter((x) => x.name === 'cabin').filter((_, i) => i % 2 === 0)) porchLight(s.x, terrainHeight(s.x, s.z, layout) + 2.15, s.z, g);
-  for (const b of LANDMARKS) porchLight(b.x, terrainHeight(b.x, b.z, layout) + 2.35, b.z + b.d * .52, g);
-
-  addBusWheels(g, layout);
   return g;
 }
