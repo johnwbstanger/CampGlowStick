@@ -32,9 +32,11 @@ export function showLobby(root: HTMLElement, s: Session, hd: LobbyHandlers): voi
   };
   s.onRoster = draw;
   s.onLatency = drawDiagnostics;
-  const oldVoiceState = s.onVoiceState;
-  s.onVoiceState = (id, enabled) => { oldVoiceState?.(id, enabled); drawDiagnostics(); };
   draw();
+  const diagTimer = window.setInterval(() => {
+    if (!diag.isConnected) { clearInterval(diagTimer); return; }
+    drawDiagnostics();
+  }, 1000);
   root.replaceChildren(h('div', { cls: 'screen', id: 'lobby' }, h('div', { cls: 'card' },
     h('h2', {}, 'Cabin 6 · Share this code'),
     h('div', { cls: 'code', id: 'lobby-code' }, s.code),
