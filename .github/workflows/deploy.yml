@@ -38,21 +38,23 @@ jobs:
       - name: Install Chromium for PR smoke tests
         if: github.event_name == 'pull_request'
         run: npx playwright install --with-deps chromium
-      - name: Core 3-client multiplayer / gameplay smoke
+      - name: Run complete browser smoke suite
         if: github.event_name == 'pull_request'
-        run: npm run smoke
+        shell: bash
         env:
           SMOKE_LOCAL_PEER: '1'
-      - name: 15-player lobby capacity smoke
-        if: github.event_name == 'pull_request'
-        run: npm run smoke:lobby15
-        env:
-          SMOKE_LOCAL_PEER: '1'
-      - name: iPad-style touch movement / jump / USE smoke
-        if: github.event_name == 'pull_request'
-        run: npm run smoke:touch
-        env:
-          SMOKE_LOCAL_PEER: '1'
+        run: |
+          set +e
+          npm run smoke
+          core=$?
+          npm run smoke:lobby15
+          lobby=$?
+          npm run smoke:touch
+          touch=$?
+          echo "core=$core lobby15=$lobby touch=$touch"
+          if [ "$core" -ne 0 ] || [ "$lobby" -ne 0 ] || [ "$touch" -ne 0 ]; then
+            exit 1
+          fi
 
       # Production Pages artifacts are created only from non-PR runs (normally main).
       - name: Upload Pages artifact
