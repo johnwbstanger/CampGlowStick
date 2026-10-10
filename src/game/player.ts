@@ -16,8 +16,6 @@ export class LocalPlayer {
   pos = { x: 0, y: 0, z: 0 };
   yaw = 0;
   pitch = 0;
-  /** @deprecated Always 100; no gameplay or HUD system consumes it. */
-  stamina = 100;
   crouch = false;
   sprint = false;
   moving = false;
@@ -89,7 +87,7 @@ export class LocalPlayer {
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - dy * 0.0022));
   }
 
-  update(dt: number, colliders: Box[], _carry: number): void {
+  update(dt: number, colliders: Box[]): void {
     const k = this.keys;
     if (k.has('ArrowLeft')) this.yaw += KEY_LOOK * dt;
     if (k.has('ArrowRight')) this.yaw -= KEY_LOOK * dt;
@@ -104,9 +102,7 @@ export class LocalPlayer {
     this.crouch = this.grounded && (heldSpaceMs >= CROUCH_HOLD_MS || this.touchCrouch);
     this.moving = this.alive && (Math.abs(f) > 0.04 || Math.abs(s) > 0.04);
 
-    // No fatigue meter, exhaustion state, drain, regeneration or carry penalty.
     this.sprint = this.moving && !this.crouch && this.grounded && (k.has('ShiftLeft') || this.touchSprint);
-    this.stamina = 100;
 
     if (this.moving) {
       const speed = this.crouch ? PLAYER.crouch : this.sprint ? PLAYER.sprint : PLAYER.walk;
@@ -142,6 +138,6 @@ export class LocalPlayer {
 
   state(held: number): PlayerState {
     const r = (n: number) => Math.round(n * 100) / 100;
-    return { p: [r(this.pos.x), r(this.pos.y), r(this.pos.z)], yaw: r(this.yaw), pitch: r(this.pitch), crouch: this.crouch, sprint: this.sprint, moving: this.moving, held, flash: this.flash, stamina: 100 };
+    return { p: [r(this.pos.x), r(this.pos.y), r(this.pos.z)], yaw: r(this.yaw), pitch: r(this.pitch), crouch: this.crouch, sprint: this.sprint, moving: this.moving, held, flash: this.flash };
   }
 }
