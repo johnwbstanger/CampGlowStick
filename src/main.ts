@@ -39,22 +39,17 @@ function enterLobby(s: Session): void {
   s.onClosed = (kind) => toMenu(kind);
   const buffered: Msg[] = [];
   let starting = false;
-  s.onMessage = (msg) => {
-    if (msg.t !== 'start') return;
-    if (starting) return;
-    starting = true;
-    s.onMessage = (m) => { if (game) game.handle(m); else buffered.push(m); };
-    void launch(msg, voice);
-  };
-  const launch = async (msg: Extract<Msg, { t: 'start' }>, v: Voice | null): Promise<void> => {
-    // Narrative first: everyone receives Gary's board immediately and can read it while the game
-    // module is still cold. It auto-advances for unattended clients/tests, but players can leave
-    // the board sooner with GET OFF THE BUS.
-    await showArrivalBriefing(root);
+
+  const launch = async (msg: Extract<Msg, { t: 'start' }>, v: Voice | null, showBriefing: boolean): Promise<void> => {
+    if (showBriefing) await showArrivalBriefing(root);
     const ui = showLoading(root);
-    const [{ Game }] = await Promise.all([import('./game/game'), new Promise((r) => setTimeout(r, 650))]);
+    const [{ Game }] = await Promise.all([import('./game/game'), new Promise((r) => setTimeout(r, showBriefing ? 650 : 180))]);
     try {
-      const g = await Game.create(root, s, msg, ui.progress);
+      const g = await Game.create(root, s, msg, ui.progress, (next) => {
+        game?.dispose();
+        game = null;
+        void launch(next, v, false);
+      });
       if (v) g.voice = v;
       game = g;
       s.onRoster = (players) => { for (const id of [...g.remotes.keys()]) if (!players.some((p) => p.id === id)) g.removeRemote(id); };
@@ -64,6 +59,15 @@ function enterLobby(s: Session): void {
       toMenu('Could not start the game: ' + (e instanceof Error ? e.message : String(e)));
     }
   };
+
+  s.onMessage = (msg) => {
+    if (msg.t !== 'start') return;
+    if (starting) return;
+    starting = true;
+    s.onMessage = (m) => { if (game) game.handle(m); else buffered.push(m); };
+    void launch(msg, voice, true);
+  };
+
   showLobby(root, s, {
     onStart: () => {
       if (!s.isHost || !s.everyoneReady) return;
