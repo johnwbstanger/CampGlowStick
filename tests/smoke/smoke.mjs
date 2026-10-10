@@ -169,6 +169,19 @@ try {
       await sleep(150);
     }
     assert((await cg(H, () => window.__cg.snap()?.over)) === 'lose', 'monster never produced lose state');
+    await H.waitForSelector('#hud-result', { timeout: 5000 });
+    assert(await H.locator('#btn-replay').count() === 1, 'host replay button missing');
+  });
+
+  await check('host replays round without page reload', async () => {
+    const before = [H.url(), g1.url(), g2.url()];
+    await H.click('#btn-replay');
+    for (const p of [H, g1, g2]) {
+      await p.waitForFunction(() => window.__cg?.ready && window.__cg.snap()?.over === '' && window.__cg.frames() > 5, null, { timeout: 90000 });
+      assert(await p.locator('#arrival-briefing').count() === 0, 'replay unexpectedly showed first-arrival briefing');
+      assert((await cg(p, () => window.__cg.campers())).length === 7, 'replay did not rebuild camper round state');
+    }
+    assert(H.url() === before[0] && g1.url() === before[1] && g2.url() === before[2], 'replay navigated/reloaded a client');
   });
 
   await check('no console errors', async () => { assert(consoleErrors.length === 0, consoleErrors.slice(0, 6).join(' | ')); });
