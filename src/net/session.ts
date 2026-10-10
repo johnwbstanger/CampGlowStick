@@ -34,9 +34,7 @@ export class Session {
   latencyMs = 0;
   reconnecting = false;
   onRoster?: (players: PlayerInfo[]) => void;
-  /** Messages from the host (host loops its own broadcasts back here). */
   onMessage?: (msg: Msg) => void;
-  /** Host only: messages from guests, and the host's own sendToHost calls. */
   onHostMessage?: (from: number, msg: Msg) => void;
   onClosed?: (kind: NetErrorKind) => void;
   onVoiceState?: (id: number, enabled: boolean) => void;
@@ -119,26 +117,19 @@ export class Session {
       };
       this.peer.on('error', onPeerError);
       conn.on('open', () => this.safeSend(conn, { t: 'hello', name, v: PROTOCOL }));
-      conn.on('error', () => fail('timeout'));
-      conn.on('close', () => { if (!settled) fail('timeout'); else this.beginReconnect(); });
+      conn.on('error', () => { if (!settled) fail('timeout'); else if (this.hostConn === conn) this.beginReconnect(); });
+      conn.on('close', () => { if (!settled) fail('timeout'); else if (this.hostConn === conn) this.beginReconnect(); });
       conn.on('data', (raw) => {
         const msg = raw as Msg;
         if (!settled && msg.t === 'welcome') {
           settled = true; clearTimeout(timer); this.peer.off('error', onPeerError);
           this.myId = msg.id; this.max = msg.max; this.hostConn = conn;
-          this.bindHostConnection(conn);
           this.startHeartbeat();
           resolve();
         } else if (!settled && msg.t === 'reject') fail(msg.reason);
         else if (settled) this.fromHost(msg);
       });
     });
-  }
-
-  private bindHostConnection(conn: DataConnection): void {
-    conn.on('data', (raw) => this.fromHost(raw as Msg));
-    conn.on('close', () => { if (this.hostConn === conn) this.beginReconnect(); });
-    conn.on('error', () => { if (this.hostConn === conn) this.beginReconnect(); });
   }
 
   private startHeartbeat(): void {
@@ -163,28 +154,32 @@ export class Session {
       if (this.closed || !this.reconnecting) return;
       if (performance.now() >= this.reconnectDeadline) { this.finishHostGone(); return; }
       if (this.peer.disconnected) {
-        try { this.peer.reconnect(); } catch { /* retry below */ }
+        try { this.peer.reconnect(); } catch { /* next retry will try again */ }
       }
       let conn: DataConnection;
       try { conn = this.peer.connect(peerIdFor(this.code), { reliable: true, serialization: 'json' }); }
       catch { this.scheduleReconnect(attempt); return; }
       let answered = false;
-      const timeout = window.setTimeout(() => { if (!answered) { conn.close(); this.scheduleReconnect(attempt); } }, 2600);
+      const failedAttempt = () => {
+        if (answered || !this.reconnecting) return;
+        answered = true; clearTimeout(timeout); this.scheduleReconnect(attempt);
+      };
+      const timeout = window.setTimeout(() => { if (!answered) { conn.close(); failedAttempt(); } }, 2600);
       conn.on('open', () => this.safeSend(conn, { t: 'hello', name: this.myName, v: PROTOCOL, resume: this.myId }));
       conn.on('data', (raw) => {
         const msg = raw as Msg;
-        if (answered) { this.fromHost(msg); return; }
+        if (answered) { if (this.hostConn === conn) this.fromHost(msg); return; }
         if (msg.t === 'welcome' && msg.id === this.myId) {
           answered = true; clearTimeout(timeout); clearTimeout(this.reconnectTimer); this.reconnectTimer = 0;
           this.hostConn = conn; this.max = msg.max; this.reconnecting = false; this.onReconnect?.(false);
-          this.bindHostConnection(conn); this.startHeartbeat();
+          this.startHeartbeat();
           this.setVoiceReady(this.voiceReady.has(this.myId));
         } else if (msg.t === 'reject') {
           answered = true; clearTimeout(timeout); conn.close(); this.scheduleReconnect(attempt);
         }
       });
-      conn.on('error', () => { if (!answered) { answered = true; clearTimeout(timeout); this.scheduleReconnect(attempt); } });
-      conn.on('close', () => { if (!answered) { answered = true; clearTimeout(timeout); this.scheduleReconnect(attempt); } });
+      conn.on('error', () => { if (!answered) failedAttempt(); else if (this.hostConn === conn) this.beginReconnect(); });
+      conn.on('close', () => { if (!answered) failedAttempt(); else if (this.hostConn === conn) this.beginReconnect(); });
     };
     attempt();
   }
@@ -231,7 +226,8 @@ export class Session {
         if (resumePlayer) {
           id = resumePlayer.id;
           const oldTimer = this.guestDropTimers.get(id); if (oldTimer) clearTimeout(oldTimer); this.guestDropTimers.delete(id);
-          this.conns.get(id)?.close(); this.conns.set(id, conn);
+          const previous = this.conns.get(id); if (previous && previous !== conn) previous.close();
+          this.conns.set(id, conn);
           this.safeSend(conn, { t: 'welcome', id, max: this.max });
           this.pushRoster();
           for (const voiceId of this.voiceReady) this.safeSend(conn, { t: 'voice', id: voiceId, enabled: true });
@@ -299,7 +295,6 @@ export class Session {
     for (const c of this.conns.values()) this.safeSend(c, msg);
   }
 
-  /** Host: send to every guest and loop back to the host's own onMessage. */
   broadcast(msg: Msg): void {
     this.sendAll(msg);
     this.onMessage?.(msg);
@@ -324,6 +319,9 @@ export class Session {
 
   isVoiceReady(id: number): boolean { return this.voiceReady.has(id); }
   get everyoneReady(): boolean { return this.players.every((p) => p.ready); }
+
+  /** Browser smoke hook: close only the guest's host transport so the real reconnect path runs. */
+  disconnectTransportForTest(): void { if (!this.isHost) this.hostConn?.close(); }
 
   leave(): void {
     if (this.closed) return;
