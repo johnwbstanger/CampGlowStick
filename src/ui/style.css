@@ -39,13 +39,29 @@ ul.players li { display: flex; justify-content: space-between; padding: 8px 10px
 #hud .controls-pop { margin-top: 6px; padding-top: 5px; border-top: 1px solid rgba(255,253,208,.45); font-size: 11px; font-weight: normal; }
 #hud .bl { position: absolute; bottom: 14px; left: 14px; width: 260px; }
 #hud .tr { position: absolute; top: 12px; right: 14px; text-align: right; font-size: 13px; background: rgba(26,58,43,.72); padding: 8px 12px; border-radius: 8px; border: 2px solid var(--tan); }
-#hud .stam { height: 12px; border: 2px solid var(--tan); border-radius: 6px; background: rgba(26,58,43,.8); overflow: hidden; }
-#hud .stam > i { display: block; height: 100%; background: var(--mustard); width: 100%; }
 #hud .cross { position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: var(--cream); opacity: .8; }
 #hud .prompt { position: absolute; left: 50%; top: calc(50% + 26px); transform: translateX(-50%); padding: 7px 12px; background: rgba(26,58,43,.84); border: 2px solid var(--tan); border-radius: 7px; color: var(--cream); font-size: 14px; letter-spacing: .4px; white-space: nowrap; }
 #hud .toast { position: absolute; bottom: 90px; width: 100%; text-align: center; font-size: 18px; padding: 0 20px; }
-#hud .result { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(26,58,43,.82); font-size: 28px; pointer-events: auto; }
-#hud .result h1 { font-size: 56px; margin: 0 0 12px; color: var(--mustard); }
+#hud .result { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(26,58,43,.88); font-size: 28px; pointer-events: auto; overflow: hidden; }
+#hud .result h1 { font-size: clamp(44px, 8vw, 78px); margin: 0 0 12px; color: var(--mustard); }
+#hud .result p { max-width: 720px; padding: 0 24px; text-align: center; font-size: clamp(16px, 2.2vw, 24px); }
+#hud .result-win { justify-content: flex-end; background: #07111f; text-shadow: 2px 2px 0 #000; }
+#hud .result-win .outro-sky { position: absolute; inset: 0 0 32% 0; background: linear-gradient(#101a3a, #72506f 58%, #b66e58); }
+#hud .result-win .outro-moon { position: absolute; width: 62px; height: 62px; border-radius: 50%; background: #fff2ce; right: 12%; top: 14%; box-shadow: 0 0 34px #fff2ce88; }
+#hud .result-win .outro-road { position: absolute; left: 0; right: 0; bottom: 0; height: 36%; background: linear-gradient(#34402f 0 20%, #23262a 20% 100%); border-top: 8px solid #151a12; }
+#hud .result-win .outro-road:after { content: ''; position: absolute; left: 0; right: 0; top: 62%; border-top: 5px dashed #d9bb6c; opacity: .7; }
+#hud .outro-bus { position: absolute; left: -38%; bottom: 34%; width: min(360px, 52vw); height: 128px; animation: glowstick-bus-drive 5.8s cubic-bezier(.21,.7,.25,1) .35s forwards; }
+#hud .outro-bus-body { position: absolute; inset: 0 0 22px; border: 5px solid #4b321f; border-radius: 18px 26px 8px 8px; background: linear-gradient(#e4a927 0 22%, #d8901f 22% 100%); box-shadow: inset 0 -12px 0 #b96326, 10px 12px 24px #0008; color: #49331f; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 10px; font: 900 15px/1 'Courier New',monospace; letter-spacing: 2px; }
+#hud .outro-windows { position: absolute; left: 20px; right: 34px; top: 14px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+#hud .outro-window { display: grid; place-items: center; height: 34px; border: 3px solid #4b321f; background: #273f56; color: #f5c998; font-size: 12px; text-shadow: none; }
+#hud .outro-wheel { position: absolute; bottom: 0; width: 46px; height: 46px; border: 9px solid #171717; border-radius: 50%; background: #6b6b62; animation: glowstick-wheel-spin .55s linear infinite; }
+#hud .outro-wheel.left { left: 54px; } #hud .outro-wheel.right { right: 48px; }
+#hud .outro-card { position: relative; z-index: 2; width: min(760px, 94vw); margin-bottom: 5vh; padding: 18px 20px 22px; text-align: center; background: rgba(6,17,22,.78); border: 3px solid rgba(255,253,208,.5); border-radius: 12px; backdrop-filter: blur(5px); }
+#hud .outro-card h1 { margin-bottom: 4px; }
+#hud .outro-kicker { color: var(--cream); font: 900 15px/1 'Courier New',monospace; letter-spacing: 3px; }
+#hud .result-lose { background: radial-gradient(circle at 50% 40%, rgba(87,28,31,.9), rgba(10,8,12,.96)); }
+@keyframes glowstick-bus-drive { 0% { transform: translateX(0) scale(1); } 55% { transform: translateX(145vw) scale(.93); } 100% { transform: translateX(185vw) scale(.72); } }
+@keyframes glowstick-wheel-spin { to { transform: rotate(360deg); } }
 #hud .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--cream); vertical-align: -2px; }
 
 .camp-map { position: absolute; inset: 0; z-index: 12; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: rgba(19,32,25,.78); pointer-events: auto; }
@@ -54,17 +70,18 @@ ul.players li { display: flex; justify-content: space-between; padding: 8px 10px
 .camp-map-hint { background: var(--cream); color: var(--wood); padding: 6px 12px; border: 3px solid var(--wood); border-radius: 6px; font-size: 14px; }
 .hidden { display: none !important; }
 
-/* Touch overlay is only shown on coarse-pointer/touch devices. */
+/* Touch overlay is only shown on coarse-pointer/touch devices. Controls are intentionally raised
+   away from the iPad home-indicator/bottom bezel so thumbs rest roughly in the lower third. */
 .touch-controls { display: none; position: absolute; inset: 0; z-index: 7; pointer-events: none; user-select: none; -webkit-user-select: none; }
 .touch-look { position: absolute; left: 43%; right: 0; top: 0; bottom: 0; pointer-events: auto; touch-action: none; }
-.touch-move { position: absolute; left: max(20px, env(safe-area-inset-left)); bottom: max(26px, env(safe-area-inset-bottom)); width: 132px; height: 132px; border-radius: 50%; background: rgba(26,58,43,.28); border: 3px solid rgba(255,253,208,.48); pointer-events: auto; touch-action: none; }
+.touch-move { position: absolute; left: max(20px, env(safe-area-inset-left)); bottom: max(18vh, 120px); width: 132px; height: 132px; border-radius: 50%; background: rgba(26,58,43,.28); border: 3px solid rgba(255,253,208,.48); pointer-events: auto; touch-action: none; }
 .touch-knob { position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; margin: -29px; border-radius: 50%; background: rgba(224,159,62,.62); border: 3px solid rgba(255,253,208,.8); }
-.touch-btn { position: absolute; pointer-events: auto; touch-action: none; min-width: 62px; padding: 8px 10px; font-size: 11px; opacity: .8; border-width: 2px; box-shadow: 1px 1px 0 var(--wood); }
+.touch-btn { position: absolute; pointer-events: auto; touch-action: none; min-width: 62px; padding: 8px 10px; font-size: 11px; opacity: .84; border-width: 2px; box-shadow: 1px 1px 0 var(--wood); }
 .touch-btn.active { background: var(--mustard); color: var(--wood); opacity: 1; }
-.touch-use { right: 24px; bottom: 96px; width: 78px; height: 78px; border-radius: 50%; }
-.touch-jump { right: 108px; bottom: 42px; }
-.touch-sprint { left: 166px; bottom: 86px; }
-.touch-crouch { left: 166px; bottom: 42px; }
+.touch-use { right: 24px; bottom: max(calc(18vh + 54px), 174px); width: 78px; height: 78px; border-radius: 50%; }
+.touch-jump { right: 108px; bottom: max(18vh, 120px); }
+.touch-sprint { left: 166px; bottom: max(calc(18vh + 44px), 164px); }
+.touch-crouch { left: 166px; bottom: max(18vh, 120px); }
 .touch-flash { right: 20px; top: 96px; }
 .touch-glow { right: 92px; top: 96px; }
 .touch-map { right: 20px; top: 48px; }
@@ -76,9 +93,9 @@ ul.players li { display: flex; justify-content: space-between; padding: 8px 10px
   #hud .tr { display: none; }
   #hud .tl { max-width: 70vw; font-size: 11px; }
   #hud .objective-line { white-space: normal; }
-  #hud .bl { left: 18px; bottom: 176px; width: 210px; font-size: 12px; }
+  #hud .bl { left: 18px; bottom: max(calc(18vh + 150px), 270px); width: 210px; font-size: 12px; }
   #hud .prompt { top: 42%; max-width: 72vw; white-space: normal; text-align: center; }
-  #hud .toast { bottom: 185px; font-size: 15px; }
+  #hud .toast { bottom: max(calc(18vh + 155px), 275px); font-size: 15px; }
 }
 
 @media (max-width: 760px) {
@@ -87,4 +104,6 @@ ul.players li { display: flex; justify-content: space-between; padding: 8px 10px
   #hud .prompt { max-width: 88vw; white-space: normal; text-align: center; }
   #hud .toast { font-size: 15px; }
   .touch-move { width: 116px; height: 116px; }
+  #hud .outro-bus { width: 280px; height: 105px; }
+  #hud .outro-card { margin-bottom: 3vh; }
 }

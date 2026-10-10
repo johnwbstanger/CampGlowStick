@@ -1,26 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { drainRate, stepStamina } from '../../src/game/stamina';
-import { DAY_SECONDS, STAMINA } from '../../src/game/constants';
+import { DAY_SECONDS } from '../../src/game/constants';
 import { NoiseBus, falloff } from '../../src/game/noise';
 import { MONSTER, newMonster, stepMonster } from '../../src/game/monster';
 import { resolveCapsule } from '../../src/game/colliders';
 import { lerpAngle } from '../../src/game/interp';
 import { buildLayout } from '../../src/game/layout';
 import { findPath } from '../../src/game/navigation';
-
-describe('stamina', () => {
-  it('drain = base * (1 + carry / cap)', () => {
-    expect(drainRate(10, 0, 10)).toBe(10);
-    expect(drainRate(10, 10, 10)).toBe(20);
-    const free = STAMINA.max - stepStamina(STAMINA.max, 1, true, 0);
-    const loaded = STAMINA.max - stepStamina(STAMINA.max, 1, true, STAMINA.maxWeightCap);
-    expect(loaded).toBeCloseTo(free * 2);
-  });
-  it('regenerates and clamps', () => {
-    expect(stepStamina(50, 1, false, 0)).toBe(50 + STAMINA.regen);
-    expect(stepStamina(1, 10, true, 0)).toBe(0);
-  });
-});
 
 describe('dusk', () => {
   it('uses a six minute sunset-to-night transition', () => {

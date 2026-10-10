@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "fetch-assets": "node scripts/fetch-assets.mjs",
-    "smoke": "node tests/smoke/smoke.mjs"
+    "smoke": "node tests/smoke/smoke.mjs",
+    "smoke:lobby15": "node tests/smoke/lobby15.mjs",
+    "smoke:touch": "node tests/smoke/touch.mjs"
   },
   "dependencies": {
     "cannon-es": "^0.20.0",

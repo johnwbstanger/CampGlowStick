@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 import { resolveCapsule, type Box } from './colliders';
-import { PLAYER, STAMINA, WORLD_HALF } from './constants';
+import { PLAYER, WORLD_HALF } from './constants';
 import { damp } from './interp';
-import { stepStamina } from './stamina';
 import type { PlayerState } from '../net/protocol';
 import type { Layout } from './layout';
 import { isDeepWater, terrainHeight } from './terrain';
@@ -12,18 +11,16 @@ const JUMP_SPEED = 5.4;
 const GRAVITY = 15.5;
 const KEY_LOOK = 1.75;
 
-/** First-person controller with desktop and touch inputs. Arrow keys are camera look, WASD is movement. */
+/** First-person controller with desktop and touch inputs. Sprint is intentionally unlimited. */
 export class LocalPlayer {
   pos = { x: 0, y: 0, z: 0 };
   yaw = 0;
   pitch = 0;
-  stamina = STAMINA.max;
   crouch = false;
   sprint = false;
   moving = false;
   flash = false;
   alive = true;
-  private exhausted = false;
   private eye: number = PLAYER.eye;
   private keys = new Set<string>();
   private spaceDownAt = 0;
@@ -90,7 +87,7 @@ export class LocalPlayer {
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - dy * 0.0022));
   }
 
-  update(dt: number, colliders: Box[], carry: number): void {
+  update(dt: number, colliders: Box[]): void {
     const k = this.keys;
     if (k.has('ArrowLeft')) this.yaw += KEY_LOOK * dt;
     if (k.has('ArrowRight')) this.yaw -= KEY_LOOK * dt;
@@ -105,10 +102,7 @@ export class LocalPlayer {
     this.crouch = this.grounded && (heldSpaceMs >= CROUCH_HOLD_MS || this.touchCrouch);
     this.moving = this.alive && (Math.abs(f) > 0.04 || Math.abs(s) > 0.04);
 
-    if (this.exhausted && this.stamina > STAMINA.minToSprint) this.exhausted = false;
-    this.sprint = this.moving && !this.crouch && this.grounded && (k.has('ShiftLeft') || this.touchSprint) && !this.exhausted && this.stamina > 0;
-    this.stamina = stepStamina(this.stamina, dt, this.sprint, carry);
-    if (this.stamina <= 0) this.exhausted = true;
+    this.sprint = this.moving && !this.crouch && this.grounded && (k.has('ShiftLeft') || this.touchSprint);
 
     if (this.moving) {
       const speed = this.crouch ? PLAYER.crouch : this.sprint ? PLAYER.sprint : PLAYER.walk;
@@ -118,7 +112,6 @@ export class LocalPlayer {
       const h = this.crouch ? PLAYER.crouchHeight : PLAYER.height;
       const ox = this.pos.x, oz = this.pos.z;
 
-      // Resolve each axis separately. This produces natural wall sliding and eliminates most "hit nothing and stop" corner snags.
       this.pos.x += dx;
       resolveCapsule(this.pos, PLAYER.radius, h, colliders, WORLD_HALF);
       if (isDeepWater(this.pos.x, this.pos.z, this.layout)) this.pos.x = ox;
@@ -145,6 +138,6 @@ export class LocalPlayer {
 
   state(held: number): PlayerState {
     const r = (n: number) => Math.round(n * 100) / 100;
-    return { p: [r(this.pos.x), r(this.pos.y), r(this.pos.z)], yaw: r(this.yaw), pitch: r(this.pitch), crouch: this.crouch, sprint: this.sprint, moving: this.moving, held, flash: this.flash, stamina: Math.round(this.stamina) };
+    return { p: [r(this.pos.x), r(this.pos.y), r(this.pos.z)], yaw: r(this.yaw), pitch: r(this.pitch), crouch: this.crouch, sprint: this.sprint, moving: this.moving, held, flash: this.flash };
   }
 }

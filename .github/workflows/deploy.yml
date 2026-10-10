@@ -1,5 +1,4 @@
-# Deploy production from main. Pull requests still run the full smoke suite, but a flaky/heavy
-# browser smoke check must not prevent a successfully built main commit from reaching Pages.
+# Deploy production from main. Pull requests run browser/game regression suites in parallel.
 name: Build, test and deploy
 
 on:
@@ -16,8 +15,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -35,28 +35,71 @@ jobs:
           VITE_TURN_USER: ${{ secrets.VITE_TURN_USER }}
           VITE_TURN_PASS: ${{ secrets.VITE_TURN_PASS }}
       - run: npm test
-
-      # Full multiplayer/browser smoke testing remains required on PRs, where it belongs.
-      # Production pushes deploy after deterministic build + unit tests so a slow second
-      # headless game session cannot strand main without a Pages artifact.
-      - name: Install Chromium for PR smoke test
-        if: github.event_name == 'pull_request'
-        run: npx playwright install --with-deps chromium
-      - name: Smoke test (local peerjs signaling server)
-        if: github.event_name == 'pull_request'
-        run: npm run smoke
-        env:
-          SMOKE_LOCAL_PEER: '1'
-
       - name: Upload Pages artifact
         if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
+  smoke-core:
+    if: github.event_name == 'pull_request'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run fetch-assets
+      - run: npx playwright install --with-deps chromium
+      - name: 3-client gameplay, voice, reconnect, replay and extraction
+        run: npm run smoke
+        env:
+          SMOKE_LOCAL_PEER: '1'
+
+  smoke-lobby15:
+    if: github.event_name == 'pull_request'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: 15-player lobby capacity
+        run: npm run smoke:lobby15
+        env:
+          SMOKE_LOCAL_PEER: '1'
+
+  smoke-touch:
+    if: github.event_name == 'pull_request'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run fetch-assets
+      - run: npx playwright install --with-deps chromium
+      - name: iPad-style controls, movement, jump and USE
+        run: npm run smoke:touch
+        env:
+          SMOKE_LOCAL_PEER: '1'
+
   deploy:
     if: github.event_name != 'pull_request'
-    needs: build
+    needs: verify
     runs-on: ubuntu-latest
     permissions:
       pages: write

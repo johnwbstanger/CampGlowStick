@@ -70,13 +70,13 @@ export class Game {
   private timers: number[] = [];
   private mouseDownAt = 0;
 
-  static async create(root: HTMLElement, net: Session, start: StartMsg, progress: (d: number, t: number) => void): Promise<Game> {
+  static async create(root: HTMLElement, net: Session, start: StartMsg, progress: (d: number, t: number) => void, onRestart?: (msg: StartMsg) => void): Promise<Game> {
     const layout = buildLayout(start.seed, start.need);
     await preload(assetsFor(layout, net.players.map((p) => p.id)), progress);
-    return new Game(root, net, layout);
+    return new Game(root, net, layout, onRestart);
   }
 
-  private constructor(root: HTMLElement, private net: Session, private layout: Layout) {
+  private constructor(root: HTMLElement, private net: Session, private layout: Layout, private onRestart?: (msg: StartMsg) => void) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -174,7 +174,11 @@ export class Game {
     this.items.set(def.id, { def, obj, target: new THREE.Vector3(), q: new THREE.Quaternion(), init: false });
   }
 
-  handle(msg: Msg): void { if (msg.t === 'spawn') this.addItemView(msg.def); else if (msg.t === 's') this.applySnap(msg); }
+  handle(msg: Msg): void {
+    if (msg.t === 'start') { this.onRestart?.(msg); return; }
+    if (msg.t === 'spawn') this.addItemView(msg.def);
+    else if (msg.t === 's') this.applySnap(msg);
+  }
 
   private applySnap(s: GameSnap): void {
     this.snap = s;
@@ -210,7 +214,15 @@ export class Game {
     if (m.mode === 'chase' && this.monsterMode !== 'chase') growl();
     this.monsterMode = m.mode;
     for (const n of s.noise) { const d = Math.hypot(n.x - this.local.pos.x, n.z - this.local.pos.z); playMaterial(n.mat, falloff(n.vol, d) * 2); }
-    if (s.over && !this.overShown) { this.overShown = true; this.campMap.hide(); this.hud.showResult(s.over); }
+    if (s.over && !this.overShown) {
+      this.overShown = true;
+      this.campMap.hide();
+      const replay = this.net.isHost ? () => {
+        const seed = Math.floor(Math.random() * 1e9);
+        this.net.broadcast({ t: 'start', seed, need: this.layout.need });
+      } : undefined;
+      this.hud.showResult(s.over, replay);
+    }
   }
 
   private held(): { name: string; mass: number } {
@@ -256,7 +268,7 @@ export class Game {
     const now = performance.now(), dt = Math.min(0.1, (now - this.last) / 1000); this.last = now; this.frames++;
     this.fpsT += dt; this.fpsN++;
     if (this.fpsT >= 0.5) { this.fps = Math.round(this.fpsN / this.fpsT); this.fpsT = this.fpsN = 0; }
-    const held = this.held(); this.local.update(dt, this.world.colliders, held.mass); this.light.update(dt, this.local.flash && this.local.alive);
+    const held = this.held(); this.local.update(dt, this.world.colliders); this.light.update(dt, this.local.flash && this.local.alive);
     const k = damp(20, dt);
     for (const v of this.items.values()) { v.obj.position.lerp(v.target, k); v.obj.quaternion.slerp(v.q, k); }
     for (const r of this.remotes.values()) r.update(dt);
@@ -274,7 +286,7 @@ export class Game {
     this.voice?.update({ x: this.local.pos.x, y: this.local.pos.y + 1.6, z: this.local.pos.z, yaw: this.local.yaw }, (id) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, y: r.pos.y + 1.6, z: r.pos.z } : undefined; });
     const mapPlayers = [...this.remotes.values()].filter((r) => r.alive).map((r) => ({ x: r.pos.x, z: r.pos.z, name: r.name }));
     this.campMap.update(this.local.pos.x, this.local.pos.z, this.local.yaw, mapPlayers);
-    this.hud.update({ stamina: this.local.stamina, held: held.name, glow: this.glow, night: this.snap?.night ?? false, time: this.snap?.time ?? 0, collected: this.snap?.collected ?? 0, need: this.layout.need, rescued: this.snap?.rescued ?? 0, camperNeed: this.snap?.camperNeed ?? 7, names: this.net.players.map((p) => p.name), fps: this.fps, prompt: this.contextPrompt(held.name) });
+    this.hud.update({ held: held.name, glow: this.glow, night: this.snap?.night ?? false, time: this.snap?.time ?? 0, collected: this.snap?.collected ?? 0, need: this.layout.need, rescued: this.snap?.rescued ?? 0, camperNeed: this.snap?.camperNeed ?? 7, names: this.net.players.map((p) => p.name), fps: this.fps, prompt: this.contextPrompt(held.name) });
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -283,7 +295,7 @@ export class Game {
       ready: true, myId: this.net.myId, isHost: this.net.isHost, need: this.layout.need, frames: () => this.frames, reach: REACH,
       teleport: (x: number, z: number) => this.local.teleport(x, z), look: (yaw: number) => { this.local.yaw = yaw; },
       act: (a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire', force?: number) => this.act(a, force), setGlow: (c: string) => { this.glow = c; },
-      local: () => ({ x: this.local.pos.x, y: this.local.pos.y, z: this.local.pos.z, stamina: this.local.stamina }),
+      local: () => ({ x: this.local.pos.x, y: this.local.pos.y, z: this.local.pos.z }),
       remote: (id: number) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, z: r.pos.z, tx: r.target?.p[0], tz: r.target?.p[2] } : null; }, remoteIds: () => [...this.remotes.keys()],
       campers: () => this.snap?.campers ?? [],
       glows: () => [...this.items.values()].filter((v) => v.def.kind === 'glow').map((v) => ({ id: v.def.id, color: v.def.color, x: v.target.x, y: v.target.y, z: v.target.z })),

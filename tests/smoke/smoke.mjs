@@ -54,7 +54,13 @@ async function startGame(h, guests) {
   for (const g of guests) await g.click('#btn-ready');
   await h.waitForFunction(() => !document.querySelector('#btn-start').disabled, null, { timeout: 10000 });
   await h.click('#btn-start');
-  for (const p of [h, ...guests]) await p.waitForFunction(() => window.__cg?.ready && window.__cg.frames() > 5, null, { timeout: 90000 });
+  for (const p of [h, ...guests]) {
+    await p.waitForSelector('#arrival-briefing', { timeout: 10000 });
+    const text = await p.innerText('#arrival-briefing');
+    assert(text.includes('GARY') && text.includes('scratching') && text.includes('gun'), `${p.label} missing Gary briefing content`);
+    await p.locator('#btn-arrive').evaluate((el) => el.click());
+  }
+  await Promise.all([h, ...guests].map((p) => p.waitForFunction(() => window.__cg?.ready && window.__cg.frames() > 5, null, { timeout: 90000 })));
 }
 const cg = (p, fn, arg) => p.evaluate(fn, arg);
 
@@ -67,9 +73,15 @@ try {
     for (const p of [H, g1, g2]) await waitPlayers(p, 3);
   });
 
+  await check('lobby surfaces connection diagnostics', async () => {
+    await g1.waitForFunction(() => /\d+ ms RTT/.test(document.querySelector('#lobby-diagnostics')?.textContent ?? ''), null, { timeout: 8000 });
+    const hostDiag = await H.innerText('#lobby-diagnostics');
+    const guestDiag = await g1.innerText('#lobby-diagnostics');
+    assert(hostDiag.includes('Connection: HOST'), `host diagnostics missing: ${hostDiag}`);
+    assert(/\d+ ms RTT/.test(guestDiag), `guest RTT missing: ${guestDiag}`);
+  });
+
   await check('proximity voice survives different enable order', async () => {
-    // Deliberately stagger the toggles: this reproduces the common iPad/phone case that used to
-    // create a receive-only PeerJS call when the later player had no microphone stream yet.
     await H.check('#voice-toggle'); await sleep(350);
     await g1.check('#voice-toggle'); await sleep(350);
     await g2.check('#voice-toggle');
@@ -77,10 +89,11 @@ try {
     for (const p of [H, g1, g2]) {
       await p.waitForFunction(() => document.querySelectorAll('audio').length >= 1, null, { timeout: 12000 });
       assert(await p.isChecked('#voice-toggle'), `${p.label} voice toggle did not stay enabled`);
+      await p.waitForFunction(() => document.querySelector('#lobby-diagnostics')?.textContent?.includes('Voice ready: 3/3'), null, { timeout: 5000 });
     }
   });
 
-  await check('all three clients enter the same game world', async () => {
+  await check('Gary briefing leads all three clients into one game world', async () => {
     await startGame(H, [g1, g2]);
     for (const p of [H, g1, g2]) {
       assert(await p.locator('canvas.game').count() === 1, 'missing game canvas');
@@ -94,6 +107,17 @@ try {
     await H.waitForFunction(() => { const r = window.__cg.remote(1); return r && Math.abs(r.tx - 8) < .1 && Math.abs(r.tz - 10) < .1; }, null, { timeout: 8000 });
   });
 
+  await check('guest transparently reconnects to an active round', async () => {
+    const id = await g1.evaluate(() => window.__cgSession.myId);
+    await g1.evaluate(() => window.__cgSession.disconnectTransportForTest());
+    await g1.waitForFunction(() => window.__cgSession.reconnecting === true, null, { timeout: 4000 });
+    await g1.waitForFunction(() => window.__cgSession.reconnecting === false, null, { timeout: 12000 });
+    assert((await g1.evaluate(() => window.__cgSession.myId)) === id, 'reconnect changed player id');
+    await g1.evaluate(() => window.__cg.teleport(11, 14));
+    await H.waitForFunction((id) => { const r = window.__cg.remote(id); return r && Math.abs(r.tx - 11) < .1 && Math.abs(r.tz - 14) < .1; }, id, { timeout: 8000 });
+    assert((await H.evaluate(() => window.__cgSession.players.length)) === 3, 'host roster duplicated/dropped reconnecting guest');
+  });
+
   await check('terrain, lake and seven campers render', async () => {
     const campers = await cg(H, () => window.__cg.campers());
     assert(campers.length === 7, `expected 7 campers, got ${campers.length}`);
@@ -101,27 +125,37 @@ try {
     assert(s.distinct > 15 && s.lit > 150, `blank-looking world ${JSON.stringify(s)}`);
   });
 
-  await check('camper interaction syncs without loading a second world', async () => {
+  await check('camper interaction state reaches every client', async () => {
     const camper = (await cg(H, () => window.__cg.campers()))[0]; assert(camper, 'camper exists');
     await H.evaluate(([x, z]) => { window.__cg.teleport(x, z + .55); window.__cg.look(Math.PI); }, [camper.x, camper.z]);
     await sleep(500);
     await H.evaluate(() => window.__cg.act('pick'));
-    for (const p of [H, g1, g2]) {
-      await p.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 10000 });
+    await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 5000 });
+    for (const p of [g1, g2]) {
+      try {
+        await p.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 20000 });
+      } catch (e) {
+        const state = await p.evaluate((id) => ({ camper: window.__cg.campers().find((c) => c.id === id), snap: window.__cg.snap() }), camper.id);
+        throw new Error(`${p.label} never received camper ${camper.id} found state; latest=${JSON.stringify(state)}`);
+      }
     }
   });
 
-  await check('found camper follows and boards the bus', async () => {
+  await check('found camper stays in escort range and boards the bus', async () => {
     const camper = (await cg(H, () => window.__cg.campers()))[0];
     const before = { x: camper.x, z: camper.z };
-    // Walk the test counselor in two moderate hops rather than teleporting across the whole world;
-    // this exercises the follower catch-up behavior without asking it to violate its range rule.
     await H.evaluate(([x, z]) => window.__cg.teleport(x + 4, z + 2), [before.x, before.z]);
     await sleep(1800);
     let moved = (await cg(H, () => window.__cg.campers()))[0];
     assert(Math.hypot(moved.x - before.x, moved.z - before.z) > 1, 'camper did not follow rescuer');
+    let local = await cg(H, () => window.__cg.local());
+    assert(Math.hypot(moved.x - local.x, moved.z - local.z) <= 5.7, 'camper escaped the escort leash');
+    await H.evaluate(([x, z]) => window.__cg.teleport(x + 18, z + 8), [local.x, local.z]);
+    await sleep(700);
+    moved = (await cg(H, () => window.__cg.campers()))[0];
+    local = await cg(H, () => window.__cg.local());
+    assert(Math.hypot(moved.x - local.x, moved.z - local.z) <= 5.7, 'camper did not regroup after a large correction');
     await H.evaluate(() => window.__cg.teleport(28, 2));
-    // The catch-up speed is intentionally bounded, so give the follower a short real simulation window.
     await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.rescued), camper.id, { timeout: 18000 });
     moved = (await cg(H, () => window.__cg.campers()))[0];
     assert(moved.rescued, 'camper never boarded bus');
@@ -146,6 +180,37 @@ try {
       await sleep(150);
     }
     assert((await cg(H, () => window.__cg.snap()?.over)) === 'lose', 'monster never produced lose state');
+    await H.waitForSelector('#hud-result', { timeout: 5000 });
+    assert(await H.locator('#btn-replay').count() === 1, 'host replay button missing');
+  });
+
+  await check('host replays round without page reload', async () => {
+    const before = [H.url(), g1.url(), g2.url()];
+    await H.click('#btn-replay');
+    for (const p of [H, g1, g2]) {
+      await p.waitForFunction(() => window.__cg?.ready && window.__cg.snap()?.over === '' && window.__cg.frames() > 5, null, { timeout: 90000 });
+      assert(await p.locator('#arrival-briefing').count() === 0, 'replay unexpectedly showed first-arrival briefing');
+      assert((await cg(p, () => window.__cg.campers())).length === 7, 'replay did not rebuild camper round state');
+    }
+    assert(H.url() === before[0] && g1.url() === before[1] && g2.url() === before[2], 'replay navigated/reloaded a client');
+  });
+
+  await check('successful rescue produces camper-safe bus departure outro', async () => {
+    for (let n = 0; n < 7; n++) {
+      const campers = await cg(H, () => window.__cg.campers());
+      const camper = campers.find((c) => !c.rescued && c.foundBy < 0);
+      if (!camper) break;
+      await H.evaluate(([x, z]) => { window.__cg.teleport(x, z + .55); window.__cg.look(Math.PI); }, [camper.x, camper.z]);
+      await sleep(180);
+      await H.evaluate(() => window.__cg.act('pick'));
+      await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 5000 });
+      await H.evaluate(() => window.__cg.teleport(28, 2));
+      await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.rescued), camper.id, { timeout: 8000 });
+    }
+    await H.waitForFunction(() => window.__cg.snap()?.over === 'win', null, { timeout: 8000 });
+    await H.waitForSelector('#hud-result .outro-bus', { timeout: 5000 });
+    assert((await H.innerText('#hud-result')).includes('HEADCOUNT 7 / 7'), 'outro missing seven-camper headcount');
+    for (const p of [g1, g2]) await p.waitForFunction(() => window.__cg.snap()?.over === 'win', null, { timeout: 8000 });
   });
 
   await check('no console errors', async () => { assert(consoleErrors.length === 0, consoleErrors.slice(0, 6).join(' | ')); });

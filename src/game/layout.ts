@@ -66,9 +66,14 @@ export function buildLayout(seed: number, need = 3): Layout {
   const add = (name: AssetName, x: number, z: number, rot: number, solid = true) => statics.push({ name, x, z, rot, solid });
 
   add('campfire', 0, 6, 0);
-  CABINS.forEach(([x, z]) => add('cabin', x, z, faceCentre(x, z)));
-  add('shed', -102, -42, 0.25);
-  add('shed', 97, -29, -0.4);
+  // Imported cabin/building visuals are explicitly non-solid in this pass. This eliminates the
+  // invisible frame barriers on iPad while we author doorway-aligned collision for the new meshes.
+  CABINS.forEach(([x, z]) => add('cabin', x, z, faceCentre(x, z), false));
+  add('shed', -102, -42, 0.25, false);
+  add('shed', 97, -29, -0.4, false);
+  // Put one of the larger Quaternius buildings close to the arrival area so the upgraded art is
+  // visible immediately instead of hidden at the edge of the 260 m map.
+  add('lodge', 15, 18, -0.2, false);
   add('bus', 31, 2, Math.PI / 2);
 
   const tents: [number, number, number][] = [

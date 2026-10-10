@@ -8,10 +8,15 @@ export interface VoiceDiagnostics {
   calls: number;
   panners: number;
   pendingIncoming: number;
+  readyPeers: number;
   peers: string[];
 }
 
-/** Optional proximity voice. Mic permission is requested only when the user flips the toggle; failures never touch gameplay. */
+/**
+ * Optional proximity voice. Media calls are only placed after BOTH peers have announced that their
+ * microphone stream exists over the reliable lobby data channel. This avoids the Safari/PeerJS
+ * failure mode where a call is answered without a local stream and can never become two-way later.
+ */
 export class Voice {
   private stream?: MediaStream;
   private calls = new Map<string, MediaConnection>();
@@ -24,19 +29,30 @@ export class Voice {
   constructor(private s: Session) {
     const peer: Peer = s.peer;
     peer.on('call', (call) => {
-      for (const p of s.players) if (p.peer === call.peer) this.peerToPlayer.set(call.peer, p.id);
-      // PeerJS cannot add our microphone retroactively to a call answered without a stream. Queue
-      // the call until this player enables voice so toggle order cannot create one-way audio.
-      if (!this.stream) {
+      const id = typeof call.metadata?.playerId === 'number'
+        ? call.metadata.playerId
+        : s.players.find((p) => p.peer === call.peer)?.id;
+      if (typeof id === 'number') this.peerToPlayer.set(call.peer, id);
+
+      if (!this.stream?.active) {
         this.pendingIncoming.get(call.peer)?.close();
         this.pendingIncoming.set(call.peer, call);
-        const discard = () => this.pendingIncoming.delete(call.peer);
+        const discard = () => { if (this.pendingIncoming.get(call.peer) === call) this.pendingIncoming.delete(call.peer); };
         call.on('close', discard); call.on('error', discard);
         return;
       }
       call.answer(this.stream);
       this.attach(call);
     });
+
+    s.onVoiceState = (id, enabled) => {
+      if (!enabled) {
+        const peerId = s.players.find((p) => p.id === id)?.peer;
+        if (peerId) this.closePeer(peerId);
+        return;
+      }
+      this.callPlayer(id);
+    };
   }
 
   async enable(): Promise<boolean> {
@@ -46,9 +62,7 @@ export class Voice {
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false,
       });
-
-      // Answer calls that arrived while this player had voice disabled. This is the important iPad /
-      // mixed-device path: no participant ends up permanently receive-only because they toggled later.
+      this.s.setVoiceReady(true);
       for (const [peerId, call] of [...this.pendingIncoming]) {
         this.pendingIncoming.delete(peerId);
         call.answer(this.stream);
@@ -56,15 +70,17 @@ export class Voice {
       }
       this.callAll();
       clearInterval(this.keepAlive);
-      this.keepAlive = window.setInterval(() => this.callAll(), 1800);
+      this.keepAlive = window.setInterval(() => this.callAll(), 1200);
       return true;
     } catch (e) {
+      this.s.setVoiceReady(false);
       console.warn('[voice] unavailable:', e instanceof Error ? e.message : e);
       return false;
     }
   }
 
   disable(): void {
+    this.s.setVoiceReady(false);
     clearInterval(this.keepAlive); this.keepAlive = 0;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = undefined;
@@ -74,47 +90,69 @@ export class Voice {
     this.mediaEls.forEach((el) => { el.pause(); el.srcObject = null; el.remove(); }); this.mediaEls.clear();
   }
 
-  /** Call every other counselor. Safe to call repeatedly and used as a mobile/WebRTC reconciliation pass. */
+  /** Reconcile media calls after roster/ICE/mobile-resume changes. */
   callAll(): void {
-    if (!this.stream) return;
-    for (const p of this.s.players) {
-      this.peerToPlayer.set(p.peer, p.id);
-      if (p.id === this.s.myId || this.calls.has(p.peer) || this.pendingIncoming.has(p.peer) || p.peer === this.s.peer.id) continue;
-      // One deterministic caller per pair prevents duplicate media calls.
-      if (this.s.myId > p.id) continue;
-      const call = this.s.peer.call(p.peer, this.stream, { metadata: { playerId: this.s.myId } });
-      if (call) this.attach(call);
-    }
+    if (!this.stream?.active) return;
+    for (const p of this.s.players) this.callPlayer(p.id);
+  }
+
+  private callPlayer(id: number): void {
+    if (!this.stream?.active || id === this.s.myId || !this.s.isVoiceReady(id)) return;
+    const p = this.s.players.find((x) => x.id === id);
+    if (!p || p.peer === this.s.peer.id) return;
+    this.peerToPlayer.set(p.peer, p.id);
+    if (this.calls.has(p.peer) || this.pendingIncoming.has(p.peer)) return;
+    if (this.s.myId > p.id) return;
+    const call = this.s.peer.call(p.peer, this.stream, { metadata: { playerId: this.s.myId } });
+    if (call) this.attach(call);
   }
 
   private attach(call: MediaConnection): void {
-    if (this.calls.has(call.peer)) { call.close(); return; }
+    const existing = this.calls.get(call.peer);
+    if (existing && existing !== call) { call.close(); return; }
+    this.pendingIncoming.delete(call.peer);
     this.calls.set(call.peer, call);
     call.on('stream', (remote) => {
       const a = audio(); if (!a) return;
       if (a.state === 'suspended') void a.resume().catch(() => undefined);
       const old = this.panners.get(call.peer); old?.disconnect();
       const panner = a.createPanner();
-      panner.panningModel = 'HRTF'; panner.distanceModel = 'inverse'; panner.refDistance = 2.2; panner.maxDistance = 46; panner.rolloffFactor = 1.35;
+      panner.panningModel = 'HRTF';
+      panner.distanceModel = 'inverse';
+      panner.refDistance = 2.2;
+      panner.maxDistance = 46;
+      panner.rolloffFactor = 1.35;
       a.createMediaStreamSource(remote).connect(panner).connect(a.destination);
       this.panners.set(call.peer, panner);
 
-      // A muted media element keeps the WebRTC stream alive on iPad/Safari while WebAudio supplies
-      // the audible spatialised signal.
       let el = this.mediaEls.get(call.peer);
       if (!el) {
-        el = document.createElement('audio'); el.autoplay = true; el.muted = true;
-        el.style.display = 'none'; document.body.append(el); this.mediaEls.set(call.peer, el);
+        el = document.createElement('audio');
+        el.autoplay = true; el.muted = true;
+        el.setAttribute('playsinline', '');
+        el.dataset.voicePeer = call.peer;
+        el.style.display = 'none';
+        document.body.append(el); this.mediaEls.set(call.peer, el);
       }
-      el.srcObject = remote; void el.play().catch(() => undefined);
+      el.srcObject = remote;
+      void el.play().catch(() => undefined);
     });
     const cleanup = () => {
       if (this.calls.get(call.peer) === call) this.calls.delete(call.peer);
       this.panners.get(call.peer)?.disconnect(); this.panners.delete(call.peer);
-      const el = this.mediaEls.get(call.peer); if (el) { el.pause(); el.srcObject = null; el.remove(); this.mediaEls.delete(call.peer); }
+      const el = this.mediaEls.get(call.peer);
+      if (el) { el.pause(); el.srcObject = null; el.remove(); this.mediaEls.delete(call.peer); }
     };
     call.on('close', cleanup);
     call.on('error', cleanup);
+  }
+
+  private closePeer(peerId: string): void {
+    this.pendingIncoming.get(peerId)?.close(); this.pendingIncoming.delete(peerId);
+    this.calls.get(peerId)?.close(); this.calls.delete(peerId);
+    this.panners.get(peerId)?.disconnect(); this.panners.delete(peerId);
+    const el = this.mediaEls.get(peerId);
+    if (el) { el.pause(); el.srcObject = null; el.remove(); this.mediaEls.delete(peerId); }
   }
 
   diagnostics(): VoiceDiagnostics {
@@ -124,6 +162,7 @@ export class Voice {
       calls: this.calls.size,
       panners: this.panners.size,
       pendingIncoming: this.pendingIncoming.size,
+      readyPeers: this.s.players.filter((p) => this.s.isVoiceReady(p.id)).length,
       peers: [...this.calls.keys()],
     };
   }
