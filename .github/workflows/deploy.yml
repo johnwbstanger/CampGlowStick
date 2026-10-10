@@ -48,6 +48,11 @@ jobs:
         run: npm run smoke:lobby15
         env:
           SMOKE_LOCAL_PEER: '1'
+      - name: iPad-style touch movement / jump / USE smoke
+        if: github.event_name == 'pull_request'
+        run: npm run smoke:touch
+        env:
+          SMOKE_LOCAL_PEER: '1'
 
       # Production Pages artifacts are created only from non-PR runs (normally main).
       - name: Upload Pages artifact
