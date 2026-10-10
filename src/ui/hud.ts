@@ -2,7 +2,7 @@ import { GLOW_COLORS, DAY_SECONDS } from '../game/constants';
 import { h } from './dom';
 
 export interface HudData {
-  stamina: number; held: string; glow: string; night: boolean; time: number;
+  held: string; glow: string; night: boolean; time: number;
   collected: number; need: number; rescued: number; camperNeed: number; names: string[]; fps: number;
   prompt?: string;
 }
@@ -34,7 +34,6 @@ export class Hud {
       this.controlsButton.textContent = opening ? 'Controls ▴' : 'Controls ▾';
     });
     this.tl.append(this.objective, this.controlsButton, this.controls);
-    // There is intentionally no stamina/fatigue bar. Sprint is unlimited by design.
     this.root.append(this.tl, this.tr, h('div', { cls: 'cross' }), this.promptEl, this.toastEl,
       h('div', { cls: 'bl' }, this.info));
   }
