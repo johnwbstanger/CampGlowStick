@@ -11,6 +11,8 @@ export type Vec3 = [number, number, number];
 export interface PlayerState {
   p: Vec3; yaw: number; pitch: number; crouch: boolean; sprint: boolean; moving: boolean;
   held: number; flash: boolean;
+  /** @deprecated Always 100. Kept temporarily so old snapshot/debug shapes do not destabilize this pass. */
+  stamina: number;
 }
 export interface ItemDef { id: number; model: string; kind: 'prop' | 'loot' | 'glow'; color?: string; mat: string }
 export type ItemSnap = [number, number, number, number, number, number, number, number, number];
