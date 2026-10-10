@@ -18,8 +18,8 @@ export class NetError extends Error { constructor(public kind: NetErrorKind) { s
 
 const CONNECT_TIMEOUT = 12000;
 const HEARTBEAT_MS = 2500;
-// World snapshots are disposable state, not events. If a browser/iPad falls behind, sending more
-// old snapshots makes latency grow without bound; skip them until the reliable channel drains.
+const RECONNECT_GRACE_MS = 12000;
+const RECONNECT_RETRY_MS = 1200;
 const SNAPSHOT_BUFFER_LIMIT = 160 * 1024;
 const SIGNALING_ERRORS = new Set(['network', 'server-error', 'socket-error', 'socket-closed', 'browser-incompatible', 'ssl-unavailable']);
 export const clampCap = (n: number): number => Math.min(MAX_CAP, Math.max(MIN_CAP, Math.floor(n) || MAX_CAP));
@@ -32,6 +32,7 @@ export class Session {
   players: PlayerInfo[] = [];
   peer!: Peer;
   latencyMs = 0;
+  reconnecting = false;
   onRoster?: (players: PlayerInfo[]) => void;
   /** Messages from the host (host loops its own broadcasts back here). */
   onMessage?: (msg: Msg) => void;
@@ -40,6 +41,7 @@ export class Session {
   onClosed?: (kind: NetErrorKind) => void;
   onVoiceState?: (id: number, enabled: boolean) => void;
   onLatency?: (ms: number) => void;
+  onReconnect?: (reconnecting: boolean) => void;
   private conns = new Map<number, DataConnection>();
   private hostConn?: DataConnection;
   private nextId = 1;
@@ -47,12 +49,16 @@ export class Session {
   private voiceReady = new Set<number>();
   private heartbeat = 0;
   private pingSeq = 0;
+  private myName = 'Counselor';
+  private reconnectTimer = 0;
+  private reconnectDeadline = 0;
+  private guestDropTimers = new Map<number, number>();
 
   get isHost(): boolean { return this.myId === 0; }
 
   static async host(name: string, max = MAX_CAP): Promise<Session> {
     const s = new Session();
-    s.max = clampCap(max);
+    s.max = clampCap(max); s.myName = name || 'Counselor';
     for (let tries = 0; tries < 8; tries++) {
       const code = generateCode();
       const peer = new Peer(peerIdFor(code), peerOptions());
@@ -66,7 +72,7 @@ export class Session {
       }
     }
     if (!s.code) throw new NetError('signaling');
-    s.players = [{ id: 0, name: name || 'Counselor', ready: true, peer: s.peer.id }];
+    s.players = [{ id: 0, name: s.myName, ready: true, peer: s.peer.id }];
     s.peer.on('connection', (c) => s.acceptGuest(c));
     s.peer.on('error', (err) => console.warn('[net] host peer error', err.type));
     return s;
@@ -76,11 +82,11 @@ export class Session {
     const code = normalizeCode(rawCode);
     if (!isValidCode(code)) throw new NetError('invalid');
     const s = new Session();
-    s.code = code;
+    s.code = code; s.myName = name || 'Counselor';
     s.peer = new Peer(peerOptions());
     try {
       await s.waitOpen(s.peer);
-      await s.connect(code, name);
+      await s.connectInitial(code, s.myName);
     } catch (e) {
       s.peer.destroy();
       throw e;
@@ -100,7 +106,7 @@ export class Session {
     });
   }
 
-  private connect(code: string, name: string): Promise<void> {
+  private connectInitial(code: string, name: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const conn = this.peer.connect(peerIdFor(code), { reliable: true, serialization: 'json' });
       let settled = false;
@@ -114,12 +120,13 @@ export class Session {
       this.peer.on('error', onPeerError);
       conn.on('open', () => this.safeSend(conn, { t: 'hello', name, v: PROTOCOL }));
       conn.on('error', () => fail('timeout'));
-      conn.on('close', () => { if (!settled) fail('timeout'); else this.hostGone(); });
+      conn.on('close', () => { if (!settled) fail('timeout'); else this.beginReconnect(); });
       conn.on('data', (raw) => {
         const msg = raw as Msg;
         if (!settled && msg.t === 'welcome') {
           settled = true; clearTimeout(timer); this.peer.off('error', onPeerError);
           this.myId = msg.id; this.max = msg.max; this.hostConn = conn;
+          this.bindHostConnection(conn);
           this.startHeartbeat();
           resolve();
         } else if (!settled && msg.t === 'reject') fail(msg.reason);
@@ -128,8 +135,15 @@ export class Session {
     });
   }
 
+  private bindHostConnection(conn: DataConnection): void {
+    conn.on('data', (raw) => this.fromHost(raw as Msg));
+    conn.on('close', () => { if (this.hostConn === conn) this.beginReconnect(); });
+    conn.on('error', () => { if (this.hostConn === conn) this.beginReconnect(); });
+  }
+
   private startHeartbeat(): void {
-    if (this.isHost || this.heartbeat) return;
+    if (this.isHost) return;
+    clearInterval(this.heartbeat);
     const ping = () => {
       const conn = this.hostConn;
       if (!conn?.open || this.closed) return;
@@ -137,6 +151,47 @@ export class Session {
     };
     ping();
     this.heartbeat = window.setInterval(ping, HEARTBEAT_MS);
+  }
+
+  private beginReconnect(): void {
+    if (this.isHost || this.closed || this.reconnecting) return;
+    clearInterval(this.heartbeat); this.heartbeat = 0;
+    this.hostConn = undefined;
+    this.reconnecting = true; this.reconnectDeadline = performance.now() + RECONNECT_GRACE_MS;
+    this.onReconnect?.(true);
+    const attempt = () => {
+      if (this.closed || !this.reconnecting) return;
+      if (performance.now() >= this.reconnectDeadline) { this.finishHostGone(); return; }
+      if (this.peer.disconnected) {
+        try { this.peer.reconnect(); } catch { /* retry below */ }
+      }
+      let conn: DataConnection;
+      try { conn = this.peer.connect(peerIdFor(this.code), { reliable: true, serialization: 'json' }); }
+      catch { this.scheduleReconnect(attempt); return; }
+      let answered = false;
+      const timeout = window.setTimeout(() => { if (!answered) { conn.close(); this.scheduleReconnect(attempt); } }, 2600);
+      conn.on('open', () => this.safeSend(conn, { t: 'hello', name: this.myName, v: PROTOCOL, resume: this.myId }));
+      conn.on('data', (raw) => {
+        const msg = raw as Msg;
+        if (answered) { this.fromHost(msg); return; }
+        if (msg.t === 'welcome' && msg.id === this.myId) {
+          answered = true; clearTimeout(timeout); clearTimeout(this.reconnectTimer); this.reconnectTimer = 0;
+          this.hostConn = conn; this.max = msg.max; this.reconnecting = false; this.onReconnect?.(false);
+          this.bindHostConnection(conn); this.startHeartbeat();
+          this.setVoiceReady(this.voiceReady.has(this.myId));
+        } else if (msg.t === 'reject') {
+          answered = true; clearTimeout(timeout); conn.close(); this.scheduleReconnect(attempt);
+        }
+      });
+      conn.on('error', () => { if (!answered) { answered = true; clearTimeout(timeout); this.scheduleReconnect(attempt); } });
+      conn.on('close', () => { if (!answered) { answered = true; clearTimeout(timeout); this.scheduleReconnect(attempt); } });
+    };
+    attempt();
+  }
+
+  private scheduleReconnect(fn: () => void): void {
+    if (this.closed || !this.reconnecting || this.reconnectTimer) return;
+    this.reconnectTimer = window.setTimeout(() => { this.reconnectTimer = 0; fn(); }, RECONNECT_RETRY_MS);
   }
 
   private fromHost(msg: Msg): void {
@@ -148,17 +203,19 @@ export class Session {
     } else if (msg.t === 'pong') {
       this.latencyMs = Math.max(0, performance.now() - msg.sent);
       this.onLatency?.(this.latencyMs);
-    } else if (msg.t === 'bye') this.hostGone();
+    } else if (msg.t === 'bye') this.finishHostGone();
     else {
       if (msg.t === 'start') this.started = true;
       this.onMessage?.(msg);
     }
   }
 
-  private hostGone(): void {
+  private finishHostGone(): void {
     if (this.closed) return;
-    this.closed = true;
+    this.reconnecting = false; this.onReconnect?.(false);
     clearInterval(this.heartbeat); this.heartbeat = 0;
+    clearTimeout(this.reconnectTimer); this.reconnectTimer = 0;
+    this.closed = true;
     this.onClosed?.('host-left');
   }
 
@@ -168,8 +225,18 @@ export class Session {
       const msg = raw as Msg;
       if (id < 0) {
         if (msg.t !== 'hello') return;
-        const reason = msg.v !== PROTOCOL ? 'version' : this.started ? 'started' : this.players.length >= this.max ? 'full' : null;
+        const resumePlayer = typeof msg.resume === 'number' ? this.players.find((p) => p.id === msg.resume && p.peer === conn.peer) : undefined;
+        const reason = msg.v !== PROTOCOL ? 'version' : resumePlayer ? null : this.started ? 'started' : this.players.length >= this.max ? 'full' : null;
         if (reason) { this.safeSend(conn, { t: 'reject', reason }); setTimeout(() => conn.close(), 400); return; }
+        if (resumePlayer) {
+          id = resumePlayer.id;
+          const oldTimer = this.guestDropTimers.get(id); if (oldTimer) clearTimeout(oldTimer); this.guestDropTimers.delete(id);
+          this.conns.get(id)?.close(); this.conns.set(id, conn);
+          this.safeSend(conn, { t: 'welcome', id, max: this.max });
+          this.pushRoster();
+          for (const voiceId of this.voiceReady) this.safeSend(conn, { t: 'voice', id: voiceId, enabled: true });
+          return;
+        }
         id = this.nextId++;
         const base = (msg.name || 'Camper').slice(0, 14);
         const name = this.players.some((p) => p.name === base) ? `${base}${id}` : base;
@@ -178,7 +245,7 @@ export class Session {
         this.safeSend(conn, { t: 'welcome', id, max: this.max });
         this.pushRoster();
         for (const voiceId of this.voiceReady) this.safeSend(conn, { t: 'voice', id: voiceId, enabled: true });
-      } else if (msg.t === 'bye') drop();
+      } else if (msg.t === 'bye') drop(true);
       else if (msg.t === 'ready') {
         const p = this.players.find((x) => x.id === id);
         if (p) { p.ready = msg.ready; this.pushRoster(); }
@@ -190,18 +257,28 @@ export class Session {
         this.safeSend(conn, { t: 'pong', n: msg.n, sent: msg.sent });
       } else this.onHostMessage?.(id, msg);
     });
-    const drop = () => {
-      if (id < 0 || !this.conns.delete(id)) return;
-      this.players = this.players.filter((p) => p.id !== id);
-      if (this.voiceReady.delete(id)) {
-        this.sendAll({ t: 'voice', id, enabled: false });
-        this.onVoiceState?.(id, false);
-      }
-      this.onHostMessage?.(id, { t: 'bye' });
-      this.pushRoster();
+    const drop = (explicit = false) => {
+      if (id < 0 || this.conns.get(id) !== conn) return;
+      this.conns.delete(id);
+      if (explicit || this.closed) { this.finalizeGuestDrop(id); return; }
+      const existing = this.guestDropTimers.get(id); if (existing) clearTimeout(existing);
+      const timer = window.setTimeout(() => { this.guestDropTimers.delete(id); if (!this.conns.has(id)) this.finalizeGuestDrop(id); }, RECONNECT_GRACE_MS);
+      this.guestDropTimers.set(id, timer);
     };
-    conn.on('close', drop);
-    conn.on('error', drop);
+    conn.on('close', () => drop(false));
+    conn.on('error', () => drop(false));
+  }
+
+  private finalizeGuestDrop(id: number): void {
+    this.conns.delete(id);
+    const oldTimer = this.guestDropTimers.get(id); if (oldTimer) clearTimeout(oldTimer); this.guestDropTimers.delete(id);
+    this.players = this.players.filter((p) => p.id !== id);
+    if (this.voiceReady.delete(id)) {
+      this.sendAll({ t: 'voice', id, enabled: false });
+      this.onVoiceState?.(id, false);
+    }
+    this.onHostMessage?.(id, { t: 'bye' });
+    this.pushRoster();
   }
 
   private pushRoster(): void {
@@ -250,8 +327,10 @@ export class Session {
 
   leave(): void {
     if (this.closed) return;
-    this.closed = true;
+    this.closed = true; this.reconnecting = false;
     clearInterval(this.heartbeat); this.heartbeat = 0;
+    clearTimeout(this.reconnectTimer); this.reconnectTimer = 0;
+    for (const timer of this.guestDropTimers.values()) clearTimeout(timer); this.guestDropTimers.clear();
     if (this.isHost) this.sendAll({ t: 'bye' });
     else this.sendToHost({ t: 'bye' });
     setTimeout(() => this.peer?.destroy(), 150);
