@@ -19,11 +19,11 @@ const CAMPER_HIDES: [number, number][] = [
   [-78, -43], [-42, -58], [19, -55], [65, -39], [-67, 21], [-20, 32], [42, 28],
   [82, 7], [-8, 58], [-88, 76], [97, 59], [-101, -39], [78, -7], [-45, 88],
 ];
-// Local-space seat coordinates inside the full-size camp bus. They are transformed by the actual
-// bus placement/rotation, so all seven rescued campers visibly end up inside the vehicle.
 const BUS_SEATS: [number, number][] = [
   [-3.0, .62], [-3.0, -.62], [-1.75, .62], [-1.75, -.62], [-.5, .62], [-.5, -.62], [.78, .62],
 ];
+const FOLLOW_SOFT_MAX = 4.25;
+const FOLLOW_HARD_MAX = 5.6;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /** Host-authoritative simulation: props, campers, noise, monster AI, rescue and extraction. */
@@ -210,45 +210,67 @@ export class HostSim {
   }
 
   private stepCampers(dt: number): void {
+    // Slot numbers are per counselor, not derived from camper id. That keeps the first child found
+    // close behind the player even if it happens to be camper #6 in the deterministic hide list.
+    const nextSlot = new Map<number, number>();
+
     for (const c of this.campers.values()) {
       if (c.rescued || c.foundBy < 0) continue;
       const pl = this.players.get(c.foundBy);
       if (!pl || !pl.alive) { c.foundBy = -1; continue; }
 
       const px = pl.state.p[0], pz = pl.state.p[2];
-      const camperToPlayer = Math.hypot(px - c.x, pz - c.z);
+      let camperToPlayer = Math.hypot(px - c.x, pz - c.z);
 
-      // The rescuer reaching the bus is the boarding trigger. A following camper who is reasonably
-      // close is moved into a unique interior seat, rather than being left standing behind the bus.
-      if (this.inBusZone(px, pz) && camperToPlayer < 13) { this.seatCamper(c); continue; }
+      // Because a follower is now hard-bounded to the counselor, boarding can use a much tighter
+      // distance than the old 13 m leash. This prevents campers across a building from teleporting
+      // into the bus just because the counselor reached extraction.
+      if (this.inBusZone(px, pz) && camperToPlayer <= FOLLOW_HARD_MAX + .5) { this.seatCamper(c); continue; }
 
+      const slot = nextSlot.get(c.foundBy) ?? 0;
+      nextSlot.set(c.foundBy, slot + 1);
+      const row = Math.floor(slot / 3);
+      const lane = [-1, 0, 1][slot % 3];
+      const back = 1.75 + row * .72;
+      const side = lane * .72;
       const [fx, fz] = this.forward(pl);
-      const rank = Math.floor(c.id / 3);
-      const lane = (c.id % 3) - 1;
-      const back = 1.65 + rank * 0.72;
-      const side = lane * 0.72;
       const rx = -fz, rz = fx;
       const tx = px - fx * back + rx * side;
       const tz = pz - fz * back + rz * side;
+
+      // If a camper ever gets outside the visible escort envelope, regroup them at their formation
+      // slot immediately. This is collision-resolved, so the correction does not put them inside a
+      // tree/wall. In ordinary movement they never reach this branch; it is a safety net for lag,
+      // teleports and corners that previously left children tens of metres behind.
+      if (camperToPlayer > FOLLOW_HARD_MAX) {
+        const regroup = { x: tx, y: terrainHeight(tx, tz, this.layout), z: tz };
+        resolveCapsule(regroup, 0.22, 1.05, this.colliders, WORLD_HALF);
+        c.x = regroup.x; c.z = regroup.z;
+        camperToPlayer = Math.hypot(px - c.x, pz - c.z);
+      }
+
       const dx = tx - c.x, dz = tz - c.z, d = Math.hypot(dx, dz);
+      let speed = pl.state.sprint ? 6.35 : pl.state.moving ? 3.75 : 2.8;
+      if (camperToPlayer > 3.3) speed = Math.max(speed, 6.5);
+      if (camperToPlayer > FOLLOW_SOFT_MAX) speed = Math.max(speed, 8.5);
 
-      // Match the counselor's pace, with progressively stronger catch-up when a camper gets hung up.
-      // This preserves the feeling of escorting a child instead of dragging a slow NPC on a leash.
-      let speed = pl.state.sprint ? 7.1 : pl.state.moving ? 5.0 : 3.8;
-      if (camperToPlayer > 4) speed = Math.max(speed, 7.8);
-      if (camperToPlayer > 8) speed = Math.max(speed, 10.5);
-      if (camperToPlayer > 13) speed = Math.max(speed, 12.5);
-
-      if (d > 0.42) {
-        const s = Math.min(Math.max(0, d - 0.28), speed * dt);
+      if (d > .28) {
+        const s = Math.min(Math.max(0, d - .18), speed * dt);
         const tryPos = { x: c.x + dx / (d || 1) * s, y: terrainHeight(c.x, c.z, this.layout), z: c.z + dz / (d || 1) * s };
         resolveCapsule(tryPos, 0.22, 1.05, this.colliders, WORLD_HALF);
         c.x = tryPos.x; c.z = tryPos.z;
       }
-      c.y = terrainHeight(c.x, c.z, this.layout);
 
-      // Keep the old direct-zone trigger too, so a camper that enters the bus before the counselor
-      // is seated immediately.
+      // Enforce the range again after collision resolution. A collider can shove a child sideways;
+      // if that makes the leash too long, snap back to the resolved formation point this tick.
+      camperToPlayer = Math.hypot(px - c.x, pz - c.z);
+      if (camperToPlayer > FOLLOW_HARD_MAX) {
+        const regroup = { x: tx, y: terrainHeight(tx, tz, this.layout), z: tz };
+        resolveCapsule(regroup, 0.22, 1.05, this.colliders, WORLD_HALF);
+        c.x = regroup.x; c.z = regroup.z;
+      }
+
+      c.y = terrainHeight(c.x, c.z, this.layout);
       if (this.inBusZone(c.x, c.z)) this.seatCamper(c);
     }
   }
