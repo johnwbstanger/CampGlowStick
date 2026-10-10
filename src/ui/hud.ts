@@ -61,9 +61,12 @@ export class Hud {
     this.toastTimer = window.setTimeout(() => { this.toastEl.textContent = ''; }, 3000);
   }
 
-  showResult(kind: 'win' | 'lose'): void {
+  showResult(kind: 'win' | 'lose', onReplay?: () => void): void {
     if (this.result) return;
     document.exitPointerLock?.();
+    const actions = h('div', { cls: 'row end-actions' },
+      ...(onReplay ? [h('button', { id: 'btn-replay', onclick: onReplay }, 'Play another round')] : []),
+      h('button', { id: 'btn-menu', cls: onReplay ? 'ghost' : '', onclick: () => { location.href = location.pathname; } }, 'Registration desk'));
     if (kind === 'win') {
       const windows = h('div', { cls: 'outro-windows' },
         ...Array.from({ length: 7 }, (_, i) => h('span', { cls: 'outro-window', 'data-seat': String(i + 1) }, '●')));
@@ -77,12 +80,14 @@ export class Hud {
           h('div', { cls: 'outro-kicker' }, 'HEADCOUNT 7 / 7'),
           h('h1', {}, 'CAMPERS SAFE!'),
           h('p', {}, 'Doors shut. Gary is nowhere in sight. The bus pulls away while the woods disappear behind you.'),
-          h('button', { id: 'btn-menu', onclick: () => { location.href = location.pathname; } }, 'Back to the registration desk')));
+          onReplay ? h('p', { cls: 'replay-hint' }, 'The host can start another round without rebuilding the lobby.') : h('p', { cls: 'replay-hint' }, 'Waiting for the host if the group wants another round.'),
+          actions));
     } else {
       this.result = h('div', { cls: 'result result-lose', id: 'hud-result' },
         h('h1', {}, 'CAUGHT!'),
         h('p', {}, 'Something heard you...'),
-        h('button', { id: 'btn-menu', onclick: () => { location.href = location.pathname; } }, 'Back to the registration desk'));
+        onReplay ? h('p', { cls: 'replay-hint' }, 'Try again with the same lobby.') : h('p', { cls: 'replay-hint' }, 'Waiting for the host if the group wants another round.'),
+        actions);
     }
     this.root.append(this.result);
   }
