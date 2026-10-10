@@ -23,7 +23,9 @@ const MODELS = {
   'blocky-characters': 'abcdefgh'.split('').map((c) => `character-${c}`),
   survival: ['structure', 'structure-metal', 'box-large', 'box', 'bucket', 'barrel', 'bottle', 'campfire-pit', 'bedroll-packed', 'signpost', 'rock-a', 'tool-axe'],
   nature: ['tent_detailedClosed', 'canoe', 'canoe_paddle', 'tree_pineTallA', 'tree_pineTallB', 'tree_pineDefaultA', 'ground_grass', 'log_stack', 'rock_largeA'],
-  furniture: ['bedBunk', 'radio'],
+  // Furniture Kit additions are intentionally imported instead of being rebuilt as primitive boxes.
+  // These are used to make cabins, dining areas, bathhouse and hiding spots feel authored and inhabited.
+  furniture: ['bedBunk', 'bedSingle', 'chair', 'table', 'bookcaseOpen', 'bathroomSink', 'bear', 'radio'],
   holiday: ['lantern', 'sock-red'],
   graveyard: ['character-zombie'],
   food: ['mug', 'can'],
@@ -73,9 +75,9 @@ rows.push(`| ${HDRI.name} | HDRI | ${HDRI.author} | [${HDRI.source.replace('http
 const credits = `# Asset credits
 
 Every 3D model, texture and HDRI used by Camp Glowstick is licensed CC0 (public domain) and is loaded from an
-external file. Nothing in the camp, the people or the props is hand-built in code. Regenerate this file and
-re-download everything with \`npm run fetch-assets\` (pinned to commit \`${SHA.slice(0, 7)}\` of the
-[${MIRROR}](https://github.com/${MIRROR}) mirror of Kenney's CC0 packs).
+external file. Environment dressing deliberately prefers human-authored asset packs over generated primitive
+stand-ins. Regenerate this file and re-download everything with \`npm run fetch-assets\` (pinned to commit
+\`${SHA.slice(0, 7)}\` of the [${MIRROR}](https://github.com/${MIRROR}) mirror of Kenney's CC0 packs).
 
 Kenney's glTF files reference their colour atlas by relative URI (\`Textures/*.png\`), so those PNGs live beside
 the GLBs in \`models/<kit>/Textures/\` and are covered by the same CC0 license as the kit.
