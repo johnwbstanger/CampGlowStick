@@ -16,6 +16,8 @@ export class LocalPlayer {
   pos = { x: 0, y: 0, z: 0 };
   yaw = 0;
   pitch = 0;
+  /** @deprecated Always 100; no gameplay or HUD system consumes it. */
+  stamina = 100;
   crouch = false;
   sprint = false;
   moving = false;
@@ -104,6 +106,7 @@ export class LocalPlayer {
 
     // No fatigue meter, exhaustion state, drain, regeneration or carry penalty.
     this.sprint = this.moving && !this.crouch && this.grounded && (k.has('ShiftLeft') || this.touchSprint);
+    this.stamina = 100;
 
     if (this.moving) {
       const speed = this.crouch ? PLAYER.crouch : this.sprint ? PLAYER.sprint : PLAYER.walk;
@@ -139,6 +142,6 @@ export class LocalPlayer {
 
   state(held: number): PlayerState {
     const r = (n: number) => Math.round(n * 100) / 100;
-    return { p: [r(this.pos.x), r(this.pos.y), r(this.pos.z)], yaw: r(this.yaw), pitch: r(this.pitch), crouch: this.crouch, sprint: this.sprint, moving: this.moving, held, flash: this.flash };
+    return { p: [r(this.pos.x), r(this.pos.y), r(this.pos.z)], yaw: r(this.yaw), pitch: r(this.pitch), crouch: this.crouch, sprint: this.sprint, moving: this.moving, held, flash: this.flash, stamina: 100 };
   }
 }
