@@ -26,6 +26,8 @@ jobs:
           cache: npm
       - uses: actions/configure-pages@v5
       - run: npm ci
+      - name: Fetch pinned CC0 game assets
+        run: npm run fetch-assets
       - run: npm run build
         env:
           VITE_BASE: /${{ github.event.repository.name }}/
