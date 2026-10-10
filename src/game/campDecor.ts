@@ -3,7 +3,6 @@ import { getModel } from '../assets/loader';
 import type { AssetName } from '../assets/manifest';
 import type { Layout } from './layout';
 import { mulberry32 } from './layout';
-import { terrainHeight } from './terrain';
 import { LANDMARKS } from './landmarks';
 import { poisson2d } from '../vendor/poisson2d';
 
