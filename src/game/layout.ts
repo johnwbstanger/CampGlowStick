@@ -1,6 +1,7 @@
 import type { AssetName } from '../assets/manifest';
 import { pickGraffiti } from './graffiti';
 import { WORLD_HALF } from './constants';
+import { poisson2d } from '../vendor/poisson2d';
 
 export interface Placed { name: AssetName; x: number; z: number; rot: number; solid: boolean }
 export interface Decal { host: number; side: number; text: string; creepy: boolean }
@@ -117,11 +118,16 @@ export function buildLayout(seed: number, need = 3): Layout {
   const lootSpots: [number, number][] = CABINS.map(([x, z], i) => [x + (i % 2 ? 2.5 : -2.5), z + (i % 3 ? 2 : -2)]);
   for (let i = 0; i < Math.max(need + 6, 9); i++) items.push({ model: lootModels[i % lootModels.length], kind: 'loot', x: lootSpots[i % lootSpots.length][0], z: lootSpots[i % lootSpots.length][1] });
 
-  const zone = (cx: number, cz: number, rx: number, rz: number, pool: AssetName[], count: number) => {
-    for (let i = 0; i < count; i++) {
-      const a = rng() * Math.PI * 2, r = Math.sqrt(rng());
-      const x = cx + Math.cos(a) * rx * r, z = cz + Math.sin(a) * rz * r;
+  /** Blue-noise ground props: spaced naturally and then filtered to the authored elliptical activity zone. */
+  const zone = (cx: number, cz: number, rx: number, rz: number, pool: AssetName[], count: number, minDistance = 1.4) => {
+    const pts = poisson2d({ width: rx * 2, height: rz * 2, minDistance, maxDistance: minDistance * 1.8, tries: 24, rng });
+    let used = 0;
+    for (const [px, pz] of pts) {
+      const nx = (px - rx) / rx, nz = (pz - rz) / rz;
+      if (nx * nx + nz * nz > 1) continue;
+      const x = cx + px - rx, z = cz + pz - rz;
       if (!inLake(x, z)) items.push({ model: pool[Math.floor(rng() * pool.length)], kind: 'prop', x, z });
+      if (++used >= count) break;
     }
   };
 
@@ -129,16 +135,17 @@ export function buildLayout(seed: number, need = 3): Layout {
   const workPool: AssetName[] = ['crate', 'bucket', 'barrel', 'axe', 'bottle', 'can', 'paddle'];
   const waterfrontPool: AssetName[] = ['paddle', 'bucket', 'bottle', 'crate', 'cooler', 'backpack', 'radio'];
 
-  CABINS.forEach(([x, z], i) => zone(x + (i % 2 ? 2 : -2), z + (i % 3 ? 1 : -1), 7.5, 5.5, campPool, 8));
-  zone(0, 6, 17, 13, campPool, 28);
-  zone(-101, -42, 14, 10, workPool, 24);
-  zone(97, -29, 14, 10, workPool, 22);
-  zone(79, -3, 10, 14, waterfrontPool, 22);
-  zone(-7, 58, 18, 13, campPool, 22);
-  zone(-86, 74, 17, 12, campPool, 18);
-  zone(101, 60, 17, 12, campPool, 18);
-  zone(-46, 89, 15, 11, ['crate', 'cooler', 'backpack', 'radio', 'lantern', 'mug'], 16);
-  zone(28, 2, 11, 8, ['crate', 'cooler', 'backpack', 'radio', 'lantern'], 14);
+  // Dynamic props are deliberately sparse; authored furniture and porch scenes provide the visual density.
+  CABINS.forEach(([x, z], i) => zone(x + (i % 2 ? 2 : -2), z + (i % 3 ? 1 : -1), 5.2, 3.8, campPool, 4, 1.5));
+  zone(0, 6, 13, 9, campPool, 12, 1.7);
+  zone(-101, -42, 10, 7, workPool, 10, 1.65);
+  zone(97, -29, 10, 7, workPool, 10, 1.65);
+  zone(79, -3, 8, 10, waterfrontPool, 10, 1.55);
+  zone(-7, 58, 13, 9, campPool, 8, 1.7);
+  zone(-86, 74, 12, 8, campPool, 8, 1.7);
+  zone(101, 60, 12, 8, campPool, 8, 1.7);
+  zone(-46, 89, 11, 8, ['crate', 'cooler', 'backpack', 'radio', 'lantern', 'mug'], 7, 1.7);
+  zone(28, 2, 8, 5, ['crate', 'cooler', 'backpack', 'radio', 'lantern'], 6, 1.6);
 
   const spawns: [number, number][] = Array.from({ length: 15 }, (_, i) => [22 + Math.cos((i / 15) * Math.PI * 2) * 5, 5 + Math.sin((i / 15) * Math.PI * 2) * 3]);
   return { statics, trees, decals, items, spawns, roads, clearings, water, extraction: { x: 28, z: 2, r: 6.5 }, monsterStart: [-118, -104], need };

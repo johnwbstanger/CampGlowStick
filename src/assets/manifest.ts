@@ -11,6 +11,12 @@ export const MANIFEST = {
   cabin: k('survival/structure', { w: 7 }),
   shed: k('survival/structure-metal', { w: 5 }),
   bunk: k('furniture/bedBunk', { w: 2.2 }),
+  bedSingle: k('furniture/bedSingle', { w: 2.0 }),
+  chair: k('furniture/chair', { h: 0.9 }),
+  table: k('furniture/table', { w: 1.9 }),
+  bookshelf: k('furniture/bookcaseOpen', { h: 1.9 }),
+  sink: k('furniture/bathroomSink', { w: 1.1 }),
+  teddy: k('furniture/bear', { h: 0.42 }),
   cooler: k('survival/box-large', { w: 0.7 }),
   crate: k('survival/box', { w: 0.55 }),
   backpack: k('survival/bedroll-packed', { w: 0.6 }),
@@ -39,6 +45,10 @@ export const MANIFEST = {
 } satisfies Record<string, AssetDef>;
 
 export type AssetName = keyof typeof MANIFEST;
+export const ALWAYS_PRELOAD: AssetName[] = [
+  'table', 'chair', 'bookshelf', 'bedSingle', 'sink', 'teddy',
+  'lantern', 'campfire', 'logs', 'crate', 'cooler', 'radio', 'mug', 'can', 'backpack', 'bucket', 'barrel', 'paddle',
+];
 export const HDRI_FILE = 'hdri/venice_sunset_1k.hdr';
 export const camperName = (i: number): AssetName => `camper${(i % CHARS.length) + 1}` as AssetName;
 export const assetUrl = (rel: string): string => `${import.meta.env.BASE_URL}assets/${rel}`;

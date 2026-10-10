@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
-import { MANIFEST, assetUrl, type AssetName } from './manifest';
+import { ALWAYS_PRELOAD, MANIFEST, assetUrl, type AssetName } from './manifest';
 
 export interface Model { object: THREE.Object3D; animations: THREE.AnimationClip[]; missing: boolean }
 
@@ -76,8 +76,9 @@ export async function loadModel(name: AssetName): Promise<Model> {
 }
 
 export async function preload(names: AssetName[], onProgress?: (done: number, total: number) => void): Promise<void> {
+  const all = [...new Set<AssetName>([...names, ...ALWAYS_PRELOAD])];
   let done = 0;
-  await Promise.all(names.map((n) => loadModel(n).then(() => onProgress?.(++done, names.length))));
+  await Promise.all(all.map((n) => loadModel(n).then(() => onProgress?.(++done, all.length))));
 }
 
 /** A fresh clone (shared geometry + materials) of a preloaded model. */
