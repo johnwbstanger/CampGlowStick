@@ -45,6 +45,10 @@ export const MANIFEST = {
 } satisfies Record<string, AssetDef>;
 
 export type AssetName = keyof typeof MANIFEST;
+export const ALWAYS_PRELOAD: AssetName[] = [
+  'table', 'chair', 'bookshelf', 'bedSingle', 'sink', 'teddy',
+  'lantern', 'campfire', 'logs', 'crate', 'cooler', 'radio', 'mug', 'can', 'backpack', 'bucket', 'barrel', 'paddle',
+];
 export const HDRI_FILE = 'hdri/venice_sunset_1k.hdr';
 export const camperName = (i: number): AssetName => `camper${(i % CHARS.length) + 1}` as AssetName;
 export const assetUrl = (rel: string): string => `${import.meta.env.BASE_URL}assets/${rel}`;
