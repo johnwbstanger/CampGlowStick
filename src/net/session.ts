@@ -18,8 +18,8 @@ export class NetError extends Error { constructor(public kind: NetErrorKind) { s
 
 const CONNECT_TIMEOUT = 12000;
 const HEARTBEAT_MS = 2500;
-const RECONNECT_GRACE_MS = 12000;
-const RECONNECT_RETRY_MS = 1200;
+const RECONNECT_GRACE_MS = 20000;
+const RECONNECT_RETRY_MS = 900;
 const SNAPSHOT_BUFFER_LIMIT = 160 * 1024;
 const SIGNALING_ERRORS = new Set(['network', 'server-error', 'socket-error', 'socket-closed', 'browser-incompatible', 'ssl-unavailable']);
 export const clampCap = (n: number): number => Math.min(MAX_CAP, Math.max(MIN_CAP, Math.floor(n) || MAX_CAP));
@@ -164,7 +164,7 @@ export class Session {
         if (answered || !this.reconnecting) return;
         answered = true; clearTimeout(timeout); this.scheduleReconnect(attempt);
       };
-      const timeout = window.setTimeout(() => { if (!answered) { conn.close(); failedAttempt(); } }, 2600);
+      const timeout = window.setTimeout(() => { if (!answered) { conn.close(); failedAttempt(); } }, 3200);
       conn.on('open', () => this.safeSend(conn, { t: 'hello', name: this.myName, v: PROTOCOL, resume: this.myId }));
       conn.on('data', (raw) => {
         const msg = raw as Msg;
@@ -220,13 +220,19 @@ export class Session {
       const msg = raw as Msg;
       if (id < 0) {
         if (msg.t !== 'hello') return;
-        const resumePlayer = typeof msg.resume === 'number' ? this.players.find((p) => p.id === msg.resume && p.peer === conn.peer) : undefined;
+        // PeerJS may recreate its transport identity during mobile radio / browser resume. During
+        // the short reconnect grace window the existing player id + original lobby name is the
+        // stable identity. New late joiners still cannot enter once a round has started.
+        const resumePlayer = typeof msg.resume === 'number'
+          ? this.players.find((p) => p.id === msg.resume && p.name === (msg.name || 'Counselor').slice(0, 14))
+          : undefined;
         const reason = msg.v !== PROTOCOL ? 'version' : resumePlayer ? null : this.started ? 'started' : this.players.length >= this.max ? 'full' : null;
         if (reason) { this.safeSend(conn, { t: 'reject', reason }); setTimeout(() => conn.close(), 400); return; }
         if (resumePlayer) {
           id = resumePlayer.id;
           const oldTimer = this.guestDropTimers.get(id); if (oldTimer) clearTimeout(oldTimer); this.guestDropTimers.delete(id);
           const previous = this.conns.get(id); if (previous && previous !== conn) previous.close();
+          resumePlayer.peer = conn.peer;
           this.conns.set(id, conn);
           this.safeSend(conn, { t: 'welcome', id, max: this.max });
           this.pushRoster();
