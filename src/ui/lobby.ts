@@ -19,7 +19,7 @@ export function showLobby(root: HTMLElement, s: Session, hd: LobbyHandlers): voi
   const hint = h('p', { cls: 'sub', id: 'lobby-hint' });
   const drawDiagnostics = () => {
     const readyVoice = s.players.filter((p) => s.isVoiceReady(p.id)).length;
-    const link = s.isHost ? 'HOST' : `${Math.round(s.latencyMs)} ms RTT`;
+    const link = s.isHost ? 'HOST' : s.reconnecting ? 'RECONNECTING…' : `${Math.round(s.latencyMs)} ms RTT`;
     diag.textContent = `Connection: ${link} · Voice ready: ${readyVoice}/${s.players.length}`;
   };
   const draw = () => {
@@ -27,11 +27,12 @@ export function showLobby(root: HTMLElement, s: Session, hd: LobbyHandlers): voi
       h('span', { cls: p.ready ? 'ready' : 'notready' }, p.ready ? 'READY' : 'waiting'))));
     count.textContent = `${s.players.length}/${s.max} campers`;
     start.disabled = !s.everyoneReady;
-    hint.textContent = s.isHost ? (s.everyoneReady ? 'Everyone is ready. Hit start when you are.' : 'Waiting for campers to ready up...') : 'Waiting for the host to start...';
+    hint.textContent = s.isHost ? (s.everyoneReady ? 'Everyone is ready. Hit start when you are.' : 'Waiting for campers to ready up...') : s.reconnecting ? 'Connection dropped — trying to rejoin the same camp...' : 'Waiting for the host to start...';
     drawDiagnostics();
   };
   s.onRoster = draw;
   s.onLatency = drawDiagnostics;
+  s.onReconnect = () => draw();
   draw();
   const diagTimer = window.setInterval(() => {
     if (!diag.isConnected) { clearInterval(diagTimer); return; }
