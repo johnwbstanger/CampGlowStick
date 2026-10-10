@@ -14,25 +14,33 @@ function walk(dir: string): string[] {
 
 describe('asset manifest', () => {
   it('has the required logical names', () => {
-    for (const n of ['camper1', 'cabin', 'bunk', 'cooler', 'backpack', 'lantern', 'tent', 'tree', 'campfire', 'mug', 'canoe']) expect(MANIFEST).toHaveProperty(n);
+    for (const n of ['camperMale', 'camperFemale', 'counselorMale', 'counselorFemale', 'bus', 'cabin', 'bunk', 'cooler', 'backpack', 'lantern', 'tent', 'tree', 'campfire', 'mug', 'canoe']) expect(MANIFEST).toHaveProperty(n);
   });
-  it.each(files)('%s exists and is a valid GLB', (f) => {
+  it.each(files)('%s exists and has the expected model format', (f) => {
     const p = join(ROOT, f);
     expect(existsSync(p)).toBe(true);
     const buf = readFileSync(p);
-    expect(buf.subarray(0, 4).toString()).toBe('glTF');
-    const json = JSON.parse(buf.subarray(20, 20 + buf.readUInt32LE(12)).toString('utf8'));
-    expect(json.asset.version).toBe('2.0');
-    expect(json.meshes.length).toBeGreaterThan(0);
-    for (const img of json.images ?? []) if (img.uri) expect(existsSync(join(dirname(p), img.uri)), img.uri).toBe(true);
+    expect(buf.length).toBeGreaterThan(512);
+    if (f.endsWith('.glb')) {
+      expect(buf.subarray(0, 4).toString()).toBe('glTF');
+      const json = JSON.parse(buf.subarray(20, 20 + buf.readUInt32LE(12)).toString('utf8'));
+      expect(json.asset.version).toBe('2.0');
+      expect(json.meshes.length).toBeGreaterThan(0);
+      for (const img of json.images ?? []) if (img.uri) expect(existsSync(join(dirname(p), img.uri)), img.uri).toBe(true);
+    } else if (f.endsWith('.fbx')) {
+      // Quaternius FBXs are binary FBX 7.x files. This catches HTML/404 responses or corrupt downloads.
+      expect(buf.subarray(0, 18).toString()).toContain('Kaydara FBX Binary');
+    } else {
+      throw new Error(`unsupported model format: ${f}`);
+    }
   });
   it('CREDITS.md covers every asset (model, HDRI) with license + source', () => {
     for (const f of [...files, HDRI_FILE]) expect(credits, f).toContain(f);
     expect(credits).toMatch(/CC0/);
     expect(credits).toMatch(/https:\/\//);
   });
-  it('no stray models are shipped without a credit', () => {
-    for (const p of walk(join(ROOT, 'models')).filter((x) => x.endsWith('.glb'))) {
+  it('no stray imported models are shipped without a credit', () => {
+    for (const p of walk(join(ROOT, 'models')).filter((x) => x.endsWith('.glb') || x.endsWith('.fbx'))) {
       expect(credits, p).toContain(p.slice(ROOT.length + 1));
     }
   });
