@@ -11,7 +11,6 @@ export class Hud {
   root = h('div', { id: 'hud' });
   private tl = h('div', { cls: 'tl compact', id: 'hud-objective' });
   private tr = h('div', { cls: 'tr', id: 'hud-players' });
-  private bar = h('i');
   private objective = h('div', { cls: 'objective-line' });
   private heldText = h('span', {});
   private swatch = h('span', { cls: 'swatch' });
@@ -35,8 +34,9 @@ export class Hud {
       this.controlsButton.textContent = opening ? 'Controls ▴' : 'Controls ▾';
     });
     this.tl.append(this.objective, this.controlsButton, this.controls);
+    // There is intentionally no stamina/fatigue bar. Sprint is unlimited by design.
     this.root.append(this.tl, this.tr, h('div', { cls: 'cross' }), this.promptEl, this.toastEl,
-      h('div', { cls: 'bl' }, this.info, h('div', { cls: 'stam' }, this.bar)));
+      h('div', { cls: 'bl' }, this.info));
   }
 
   private setText(el: HTMLElement, text: string): void { if (el.textContent !== text) el.textContent = text; }
@@ -47,7 +47,6 @@ export class Hud {
     const mins = Math.floor(remain / 60), secs = remain % 60;
     this.setText(this.objective, `${d.night ? 'NIGHT' : `DUSK ${mins}:${String(secs).padStart(2, '0')}`} · campers ${d.rescued}/${d.camperNeed} · return to bus`);
     this.setText(this.tr, `Counselors: ${d.names.join(', ')} · ${d.fps} fps`);
-    this.bar.style.width = `${d.stamina}%`;
     this.setText(this.heldText, `Holding: ${d.held || 'nothing'}  `);
     this.setText(this.glowText, ` ${d.glow}`);
     const bg = `background:${GLOW_COLORS[d.glow]}`;
