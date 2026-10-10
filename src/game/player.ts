@@ -16,9 +16,6 @@ export class LocalPlayer {
   pos = { x: 0, y: 0, z: 0 };
   yaw = 0;
   pitch = 0;
-  // Kept at 100 only for the current network/HUD shape while the obsolete field is removed safely.
-  // It is not drained, regenerated or consulted by movement.
-  stamina = 100;
   crouch = false;
   sprint = false;
   moving = false;
@@ -105,10 +102,8 @@ export class LocalPlayer {
     this.crouch = this.grounded && (heldSpaceMs >= CROUCH_HOLD_MS || this.touchCrouch);
     this.moving = this.alive && (Math.abs(f) > 0.04 || Math.abs(s) > 0.04);
 
-    // No fatigue meter or exhaustion gate: if the player is moving, grounded and holding sprint,
-    // they sprint. Carrying objects does not secretly reduce available sprint time.
+    // No fatigue meter, exhaustion state, drain, regeneration or carry penalty.
     this.sprint = this.moving && !this.crouch && this.grounded && (k.has('ShiftLeft') || this.touchSprint);
-    this.stamina = 100;
 
     if (this.moving) {
       const speed = this.crouch ? PLAYER.crouch : this.sprint ? PLAYER.sprint : PLAYER.walk;
@@ -118,7 +113,6 @@ export class LocalPlayer {
       const h = this.crouch ? PLAYER.crouchHeight : PLAYER.height;
       const ox = this.pos.x, oz = this.pos.z;
 
-      // Resolve each axis separately. This produces natural wall sliding and eliminates most "hit nothing and stop" corner snags.
       this.pos.x += dx;
       resolveCapsule(this.pos, PLAYER.radius, h, colliders, WORLD_HALF);
       if (isDeepWater(this.pos.x, this.pos.z, this.layout)) this.pos.x = ox;
@@ -145,6 +139,6 @@ export class LocalPlayer {
 
   state(held: number): PlayerState {
     const r = (n: number) => Math.round(n * 100) / 100;
-    return { p: [r(this.pos.x), r(this.pos.y), r(this.pos.z)], yaw: r(this.yaw), pitch: r(this.pitch), crouch: this.crouch, sprint: this.sprint, moving: this.moving, held, flash: this.flash, stamina: 100 };
+    return { p: [r(this.pos.x), r(this.pos.y), r(this.pos.z)], yaw: r(this.yaw), pitch: r(this.pitch), crouch: this.crouch, sprint: this.sprint, moving: this.moving, held, flash: this.flash };
   }
 }
