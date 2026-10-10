@@ -256,7 +256,7 @@ export class Game {
     const now = performance.now(), dt = Math.min(0.1, (now - this.last) / 1000); this.last = now; this.frames++;
     this.fpsT += dt; this.fpsN++;
     if (this.fpsT >= 0.5) { this.fps = Math.round(this.fpsN / this.fpsT); this.fpsT = this.fpsN = 0; }
-    const held = this.held(); this.local.update(dt, this.world.colliders, held.mass); this.light.update(dt, this.local.flash && this.local.alive);
+    const held = this.held(); this.local.update(dt, this.world.colliders); this.light.update(dt, this.local.flash && this.local.alive);
     const k = damp(20, dt);
     for (const v of this.items.values()) { v.obj.position.lerp(v.target, k); v.obj.quaternion.slerp(v.q, k); }
     for (const r of this.remotes.values()) r.update(dt);
@@ -274,7 +274,7 @@ export class Game {
     this.voice?.update({ x: this.local.pos.x, y: this.local.pos.y + 1.6, z: this.local.pos.z, yaw: this.local.yaw }, (id) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, y: r.pos.y + 1.6, z: r.pos.z } : undefined; });
     const mapPlayers = [...this.remotes.values()].filter((r) => r.alive).map((r) => ({ x: r.pos.x, z: r.pos.z, name: r.name }));
     this.campMap.update(this.local.pos.x, this.local.pos.z, this.local.yaw, mapPlayers);
-    this.hud.update({ stamina: this.local.stamina, held: held.name, glow: this.glow, night: this.snap?.night ?? false, time: this.snap?.time ?? 0, collected: this.snap?.collected ?? 0, need: this.layout.need, rescued: this.snap?.rescued ?? 0, camperNeed: this.snap?.camperNeed ?? 7, names: this.net.players.map((p) => p.name), fps: this.fps, prompt: this.contextPrompt(held.name) });
+    this.hud.update({ held: held.name, glow: this.glow, night: this.snap?.night ?? false, time: this.snap?.time ?? 0, collected: this.snap?.collected ?? 0, need: this.layout.need, rescued: this.snap?.rescued ?? 0, camperNeed: this.snap?.camperNeed ?? 7, names: this.net.players.map((p) => p.name), fps: this.fps, prompt: this.contextPrompt(held.name) });
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -283,7 +283,7 @@ export class Game {
       ready: true, myId: this.net.myId, isHost: this.net.isHost, need: this.layout.need, frames: () => this.frames, reach: REACH,
       teleport: (x: number, z: number) => this.local.teleport(x, z), look: (yaw: number) => { this.local.yaw = yaw; },
       act: (a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire', force?: number) => this.act(a, force), setGlow: (c: string) => { this.glow = c; },
-      local: () => ({ x: this.local.pos.x, y: this.local.pos.y, z: this.local.pos.z, stamina: this.local.stamina }),
+      local: () => ({ x: this.local.pos.x, y: this.local.pos.y, z: this.local.pos.z }),
       remote: (id: number) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, z: r.pos.z, tx: r.target?.p[0], tz: r.target?.p[2] } : null; }, remoteIds: () => [...this.remotes.keys()],
       campers: () => this.snap?.campers ?? [],
       glows: () => [...this.items.values()].filter((v) => v.def.kind === 'glow').map((v) => ({ id: v.def.id, color: v.def.color, x: v.target.x, y: v.target.y, z: v.target.z })),
