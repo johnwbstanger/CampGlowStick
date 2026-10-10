@@ -68,8 +68,6 @@ try {
   });
 
   await check('proximity voice survives different enable order', async () => {
-    // Deliberately stagger the toggles: this reproduces the common iPad/phone case that used to
-    // create a receive-only PeerJS call when the later player had no microphone stream yet.
     await H.check('#voice-toggle'); await sleep(350);
     await g1.check('#voice-toggle'); await sleep(350);
     await g2.check('#voice-toggle');
@@ -111,17 +109,24 @@ try {
     }
   });
 
-  await check('found camper follows and boards the bus', async () => {
+  await check('found camper stays in escort range and boards the bus', async () => {
     const camper = (await cg(H, () => window.__cg.campers()))[0];
     const before = { x: camper.x, z: camper.z };
-    // Walk the test counselor in two moderate hops rather than teleporting across the whole world;
-    // this exercises the follower catch-up behavior without asking it to violate its range rule.
     await H.evaluate(([x, z]) => window.__cg.teleport(x + 4, z + 2), [before.x, before.z]);
     await sleep(1800);
     let moved = (await cg(H, () => window.__cg.campers()))[0];
     assert(Math.hypot(moved.x - before.x, moved.z - before.z) > 1, 'camper did not follow rescuer');
+    let local = await cg(H, () => window.__cg.local());
+    assert(Math.hypot(moved.x - local.x, moved.z - local.z) <= 5.7, 'camper escaped the escort leash');
+
+    // A large network correction/teleport must not leave the camper stranded half a map away.
+    await H.evaluate(([x, z]) => window.__cg.teleport(x + 18, z + 8), [local.x, local.z]);
+    await sleep(700);
+    moved = (await cg(H, () => window.__cg.campers()))[0];
+    local = await cg(H, () => window.__cg.local());
+    assert(Math.hypot(moved.x - local.x, moved.z - local.z) <= 5.7, 'camper did not regroup after a large correction');
+
     await H.evaluate(() => window.__cg.teleport(28, 2));
-    // The catch-up speed is intentionally bounded, so give the follower a short real simulation window.
     await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.rescued), camper.id, { timeout: 18000 });
     moved = (await cg(H, () => window.__cg.campers()))[0];
     assert(moved.rescued, 'camper never boarded bus');
