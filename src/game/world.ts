@@ -29,17 +29,16 @@ function boxOf(obj: THREE.Object3D, shrink = 0): Box {
   const b = new THREE.Box3().setFromObject(obj);
   return { minX: b.min.x + shrink, maxX: b.max.x - shrink, minZ: b.min.z + shrink, maxZ: b.max.z - shrink, minY: b.min.y, maxY: b.max.y };
 }
-function pushBox(out: Box[], minX: number, maxX: number, minZ: number, maxZ: number, minY: number, maxY: number) {
+function pushBox(out: Box[], minX: number, maxX: number, minZ: number, maxZ: number, minY: number, maxY: number): void {
   if (maxX > minX && maxZ > minZ) out.push({ minX, maxX, minZ, maxZ, minY, maxY });
 }
 
-/** Replace one giant building AABB with perimeter walls and a front-door gap. */
+/** Solid building shell with a usable front-door gap. */
 function hollowBuildingColliders(out: Box[], b: Box, rot: number, door = 1.55): void {
   const t = 0.22, h0 = b.minY, h1 = b.maxY;
   const fx = Math.sin(rot), fz = Math.cos(rot);
   if (Math.abs(fz) >= Math.abs(fx)) {
-    const frontMax = fz >= 0, zFront = frontMax ? b.maxZ : b.minZ;
-    const zBack = frontMax ? b.minZ : b.maxZ;
+    const frontMax = fz >= 0, zFront = frontMax ? b.maxZ : b.minZ, zBack = frontMax ? b.minZ : b.maxZ;
     pushBox(out, b.minX, b.maxX, zBack - t / 2, zBack + t / 2, h0, h1);
     pushBox(out, b.minX - t / 2, b.minX + t / 2, b.minZ, b.maxZ, h0, h1);
     pushBox(out, b.maxX - t / 2, b.maxX + t / 2, b.minZ, b.maxZ, h0, h1);
@@ -47,14 +46,24 @@ function hollowBuildingColliders(out: Box[], b: Box, rot: number, door = 1.55): 
     pushBox(out, b.minX, cx - door / 2, zFront - t / 2, zFront + t / 2, h0, h1);
     pushBox(out, cx + door / 2, b.maxX, zFront - t / 2, zFront + t / 2, h0, h1);
   } else {
-    const frontMax = fx >= 0, xFront = frontMax ? b.maxX : b.minX;
-    const xBack = frontMax ? b.minX : b.maxX;
+    const frontMax = fx >= 0, xFront = frontMax ? b.maxX : b.minX, xBack = frontMax ? b.minX : b.maxX;
     pushBox(out, xBack - t / 2, xBack + t / 2, b.minZ, b.maxZ, h0, h1);
     pushBox(out, b.minX, b.maxX, b.minZ - t / 2, b.minZ + t / 2, h0, h1);
     pushBox(out, b.minX, b.maxX, b.maxZ - t / 2, b.maxZ + t / 2, h0, h1);
     const cz = (b.minZ + b.maxZ) / 2;
     pushBox(out, xFront - t / 2, xFront + t / 2, b.minZ, cz - door / 2, h0, h1);
     pushBox(out, xFront - t / 2, xFront + t / 2, cz + door / 2, b.maxZ, h0, h1);
+  }
+}
+
+/**
+ * Kenney's survival structures visually read as open posts/frames. A wall-sized AABB around those
+ * posts created the invisible barriers seen on iPad. Only the four visible corner posts collide now.
+ */
+function openFrameColliders(out: Box[], b: Box): void {
+  const post = 0.34;
+  for (const x of [b.minX, b.maxX]) for (const z of [b.minZ, b.maxZ]) {
+    pushBox(out, x - post, x + post, z - post, z + post, b.minY, b.maxY);
   }
 }
 
@@ -137,14 +146,11 @@ function makeLandmark(def: LandmarkDef, layout: Layout, colliders: Box[]): THREE
   panel(def.w - .7, .11, def.d - .7, 0, def.h - .2, 0, trim);
   addSign(g, def.label, def.h - .65, def.d / 2 + .11, Math.min(def.w * .62, 6));
 
-  // Furniture and room-specific identity. These are deliberately simple, solid camp fixtures,
-  // while the exterior remains in the same warm wood/earth palette as the approved environment.
   const table = (x: number, z: number, w = 2.3, d = .8) => {
     panel(w, .12, d, x, .78, z, trim); panel(.12, .72, .12, x - w * .38, .4, z - d * .28, dark); panel(.12, .72, .12, x + w * .38, .4, z + d * .28, dark);
   };
-  if (def.kind === 'dining') {
-    for (const x of [-4.5, 0, 4.5]) for (const z of [-1.8, 1.3]) table(x, z, 3.1, .9);
-  } else if (def.kind === 'kitchen') {
+  if (def.kind === 'dining') for (const x of [-4.5, 0, 4.5]) for (const z of [-1.8, 1.3]) table(x, z, 3.1, .9);
+  else if (def.kind === 'kitchen') {
     panel(def.w - 1.4, .92, .65, 0, .48, -def.d / 2 + .65, trim);
     panel(2.2, 1.1, .8, -2.7, .55, 1.4, accent); panel(2.2, 1.1, .8, 2.7, .55, 1.4, accent);
   } else if (def.kind === 'director') {
@@ -156,32 +162,32 @@ function makeLandmark(def: LandmarkDef, layout: Layout, colliders: Box[]): THREE
     panel(def.w - 1.2, .16, .48, 0, .55, 2.35, trim);
   }
 
-  // Because the landmark rotations are either small or cardinal, an axis-aligned shell is a good
-  // gameplay collider approximation. Director swaps width/depth at ~90 degrees.
   const swap = Math.abs(Math.sin(def.rot)) > .7, ww = swap ? def.d : def.w, dd = swap ? def.w : def.d;
   const b: Box = { minX: def.x - ww / 2, maxX: def.x + ww / 2, minZ: def.z - dd / 2, maxZ: def.z + dd / 2, minY: y, maxY: y + def.h };
   hollowBuildingColliders(colliders, b, def.rot, door);
   return g;
 }
 
-/** Full-size enterable camp bus shell. */
+function rotatedBox(out: Box[], p: Placed, lx0: number, lx1: number, lz0: number, lz1: number, y0: number, y1: number): void {
+  const c = Math.cos(p.rot), s = Math.sin(p.rot);
+  const pts = [[lx0, lz0], [lx0, lz1], [lx1, lz0], [lx1, lz1]].map(([x, z]) => [p.x + x * c + z * s, p.z - x * s + z * c]);
+  const xs = pts.map((v) => v[0]), zs = pts.map((v) => v[1]);
+  pushBox(out, Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs), y0, y1);
+}
+
+/** Imported Quaternius school-bus exterior with a simple walkable interior collision shell. */
 function makeBus(p: Placed, layout: Layout, colliders: Box[]): THREE.Group {
-  const g = new THREE.Group(), y = terrainHeight(p.x, p.z, layout), L = 9.2, W = 3.25, H = 2.65, t = 0.16;
-  g.position.set(p.x, y, p.z);
-  const bodyMat = new THREE.MeshStandardMaterial({ color: '#D78B2F', roughness: 0.78, metalness: 0.04 });
-  const trimMat = new THREE.MeshStandardMaterial({ color: '#EFE1B6', roughness: 0.85 });
-  const dark = new THREE.MeshStandardMaterial({ color: '#26333A', roughness: 0.55 });
-  const panel = (w: number, h: number, d: number, x: number, yy: number, z: number, mat = bodyMat) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, yy, z); m.castShadow = m.receiveShadow = true; g.add(m); return m; };
-  panel(L, 0.16, W, 0, 0.08, 0, dark); panel(L, 0.16, W, 0, H, 0, trimMat);
-  panel(L, H, t, 0, H / 2, W / 2, bodyMat);
-  panel(5.4, H, t, -1.9, H / 2, -W / 2, bodyMat); panel(1.4, H, t, 3.9, H / 2, -W / 2, bodyMat);
-  panel(t, H, W, -L / 2, H / 2, 0, bodyMat); panel(t, H, W, L / 2, H / 2, 0, bodyMat);
-  for (let x = -3.1; x <= 2.6; x += 1.45) { panel(0.68, 0.48, 0.86, x, 0.48, 0.82, trimMat); panel(0.68, 0.48, 0.86, x, 0.48, -0.35, trimMat); }
-  for (let x = -3.2; x <= 2.8; x += 1.5) { panel(0.82, 0.62, 0.035, x, 1.72, W / 2 + 0.01, dark); panel(0.82, 0.62, 0.035, x, 1.72, -W / 2 - 0.01, dark); }
-  const bx0 = p.x - L / 2, bx1 = p.x + L / 2, bz0 = p.z - W / 2, bz1 = p.z + W / 2;
-  pushBox(colliders, bx0, bx1, bz1 - t, bz1 + t, y, y + H);
-  pushBox(colliders, bx0 - t, bx0 + t, bz0, bz1, y, y + H); pushBox(colliders, bx1 - t, bx1 + t, bz0, bz1, y, y + H);
-  pushBox(colliders, bx0, p.x + 0.8, bz0 - t, bz0 + t, y, y + H); pushBox(colliders, p.x + 2.15, bx1, bz0 - t, bz0 + t, y, y + H);
+  const g = new THREE.Group(), y = terrainHeight(p.x, p.z, layout), L = 9.4, W = 3.05, H = 2.8, t = .18;
+  g.position.set(p.x, y, p.z); g.rotation.y = p.rot;
+  const visual = getModel('bus'); visual.name = 'quaternius-school-bus'; g.add(visual);
+
+  // Keep the interior traversable. The right side has a generous door opening rather than a full
+  // invisible wall. The visual mesh itself never creates collision.
+  rotatedBox(colliders, p, -L / 2, L / 2, W / 2 - t, W / 2 + t, y, y + H);
+  rotatedBox(colliders, p, -L / 2 - t, -L / 2 + t, -W / 2, W / 2, y, y + H);
+  rotatedBox(colliders, p, L / 2 - t, L / 2 + t, -W / 2, W / 2, y, y + H);
+  rotatedBox(colliders, p, -L / 2, .55, -W / 2 - t, -W / 2 + t, y, y + H);
+  rotatedBox(colliders, p, 2.25, L / 2, -W / 2 - t, -W / 2 + t, y, y + H);
   return g;
 }
 
@@ -198,7 +204,7 @@ export function buildWorld(layout: Layout): World {
     const o = getModel(p.name), local = new THREE.Box3().setFromObject(o); o.position.set(p.x, terrainHeight(p.x, p.z, layout), p.z); o.rotation.y = p.rot; group.add(o); o.updateMatrixWorld(true);
     if (p.solid) {
       const b = boxOf(o, p.name === 'campfire' ? 0.2 : 0.05);
-      if (p.name === 'cabin' || p.name === 'shed') hollowBuildingColliders(colliders, b, p.rot, p.name === 'cabin' ? 1.6 : 1.25);
+      if (p.name === 'cabin' || p.name === 'shed') openFrameColliders(colliders, b);
       else colliders.push(b);
     }
     hosts.push(o); hostBoxes.push(local);
