@@ -70,13 +70,13 @@ export class Game {
   private timers: number[] = [];
   private mouseDownAt = 0;
 
-  static async create(root: HTMLElement, net: Session, start: StartMsg, progress: (d: number, t: number) => void): Promise<Game> {
+  static async create(root: HTMLElement, net: Session, start: StartMsg, progress: (d: number, t: number) => void, onRestart?: (msg: StartMsg) => void): Promise<Game> {
     const layout = buildLayout(start.seed, start.need);
     await preload(assetsFor(layout, net.players.map((p) => p.id)), progress);
-    return new Game(root, net, layout);
+    return new Game(root, net, layout, onRestart);
   }
 
-  private constructor(root: HTMLElement, private net: Session, private layout: Layout) {
+  private constructor(root: HTMLElement, private net: Session, private layout: Layout, private onRestart?: (msg: StartMsg) => void) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -174,7 +174,11 @@ export class Game {
     this.items.set(def.id, { def, obj, target: new THREE.Vector3(), q: new THREE.Quaternion(), init: false });
   }
 
-  handle(msg: Msg): void { if (msg.t === 'spawn') this.addItemView(msg.def); else if (msg.t === 's') this.applySnap(msg); }
+  handle(msg: Msg): void {
+    if (msg.t === 'start') { this.onRestart?.(msg); return; }
+    if (msg.t === 'spawn') this.addItemView(msg.def);
+    else if (msg.t === 's') this.applySnap(msg);
+  }
 
   private applySnap(s: GameSnap): void {
     this.snap = s;
@@ -210,7 +214,15 @@ export class Game {
     if (m.mode === 'chase' && this.monsterMode !== 'chase') growl();
     this.monsterMode = m.mode;
     for (const n of s.noise) { const d = Math.hypot(n.x - this.local.pos.x, n.z - this.local.pos.z); playMaterial(n.mat, falloff(n.vol, d) * 2); }
-    if (s.over && !this.overShown) { this.overShown = true; this.campMap.hide(); this.hud.showResult(s.over); }
+    if (s.over && !this.overShown) {
+      this.overShown = true;
+      this.campMap.hide();
+      const replay = this.net.isHost ? () => {
+        const seed = Math.floor(Math.random() * 1e9);
+        this.net.broadcast({ t: 'start', seed, need: this.layout.need });
+      } : undefined;
+      this.hud.showResult(s.over, replay);
+    }
   }
 
   private held(): { name: string; mass: number } {
