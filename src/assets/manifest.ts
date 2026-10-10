@@ -1,12 +1,21 @@
-// Logical name -> GLB (relative to public/assets/). `h` / `w` normalise the model to metres
-// (height, or largest horizontal extent) because the source kits use wildly different scales.
-export interface AssetDef { file: string; h?: number; w?: number }
+// Logical name -> imported model (relative to public/assets/). `h` / `w` normalise the model to metres
+// (height, or largest horizontal extent) because the source packs use wildly different scales.
+export interface AssetDef { file: string; h?: number; w?: number; format?: 'glb' | 'fbx' }
 
-const k = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/${file}.glb`, ...fit });
+const k = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/${file}.glb`, format: 'glb', ...fit });
+const q = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/quaternius/${file}.fbx`, format: 'fbx', ...fit });
 const CHARS = 'abcdefgh'.split('');
 
 export const MANIFEST = {
   ...Object.fromEntries(CHARS.map((c, i) => [`camper${i + 1}`, k(`blocky-characters/character-${c}`, { h: 1.7 })])),
+
+  // Smooth Quaternius humans are the production character family. The same authored meshes are
+  // normalised to different heights so campers read as children and counselors as adults.
+  camperMale: q('Smooth_Male_Casual', { h: 1.28 }),
+  camperFemale: q('Smooth_Female_Casual', { h: 1.24 }),
+  counselorMale: q('Smooth_Male_Shirt', { h: 1.82 }),
+  counselorFemale: q('Smooth_Female_Casual', { h: 1.74 }),
+
   monster: k('graveyard/character-zombie', { h: 2.2 }),
   cabin: k('survival/structure', { w: 7 }),
   shed: k('survival/structure-metal', { w: 5 }),
@@ -40,7 +49,8 @@ export const MANIFEST = {
   rock: k('nature/rock_largeA', { w: 2.2 }),
   boulder: k('survival/rock-a', { w: 1.6 }),
   sign: k('survival/signpost', { h: 1.4 }),
-  bus: k('car/van', { w: 6 }),
+  // Real school-bus silhouette from Quaternius Public Transport Pack instead of the Car Kit van.
+  bus: q('SchoolBus', { w: 9.4 }),
   ground: k('nature/ground_grass', { w: 4 }),
 } satisfies Record<string, AssetDef>;
 
@@ -48,6 +58,7 @@ export type AssetName = keyof typeof MANIFEST;
 export const ALWAYS_PRELOAD: AssetName[] = [
   'table', 'chair', 'bookshelf', 'bedSingle', 'sink', 'teddy',
   'lantern', 'campfire', 'logs', 'crate', 'cooler', 'radio', 'mug', 'can', 'backpack', 'bucket', 'barrel', 'paddle',
+  'camperMale', 'camperFemale', 'counselorMale', 'counselorFemale',
 ];
 export const HDRI_FILE = 'hdri/venice_sunset_1k.hdr';
 export const camperName = (i: number): AssetName => `camper${(i % CHARS.length) + 1}` as AssetName;
