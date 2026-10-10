@@ -5,6 +5,7 @@ import type { Game } from './game/game';
 import { normalizeCode } from './net/codes';
 import type { Msg } from './net/protocol';
 import { NetError, Session, clampCap, type NetErrorKind } from './net/session';
+import { showArrivalBriefing } from './ui/arrival';
 import { showLoading } from './ui/loading';
 import { showLobby } from './ui/lobby';
 import { showMenu } from './ui/menu';
@@ -46,8 +47,12 @@ function enterLobby(s: Session): void {
     void launch(msg, voice);
   };
   const launch = async (msg: Extract<Msg, { t: 'start' }>, v: Voice | null): Promise<void> => {
+    // Narrative first: everyone receives Gary's board immediately and can read it while the game
+    // module is still cold. It auto-advances for unattended clients/tests, but players can leave
+    // the board sooner with GET OFF THE BUS.
+    await showArrivalBriefing(root);
     const ui = showLoading(root);
-    const [{ Game }] = await Promise.all([import('./game/game'), new Promise((r) => setTimeout(r, 900))]);
+    const [{ Game }] = await Promise.all([import('./game/game'), new Promise((r) => setTimeout(r, 650))]);
     try {
       const g = await Game.create(root, s, msg, ui.progress);
       if (v) g.voice = v;
