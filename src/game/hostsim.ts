@@ -80,7 +80,7 @@ export class HostSim {
   }
 
   private addPlayer(id: number, spawn: [number, number]): void {
-    this.players.set(id, { alive: true, stepT: 0, state: { p: [spawn[0], terrainHeight(spawn[0], spawn[1], this.layout), spawn[1]], yaw: 0, pitch: 0, crouch: false, sprint: false, moving: false, held: -1, flash: false, stamina: 100 } });
+    this.players.set(id, { alive: true, stepT: 0, state: { p: [spawn[0], terrainHeight(spawn[0], spawn[1], this.layout), spawn[1]], yaw: 0, pitch: 0, crouch: false, sprint: false, moving: false, held: -1, flash: false } });
   }
 
   private addItem(def: ItemDef, x: number, y: number, z: number): SimItem {
@@ -210,8 +210,6 @@ export class HostSim {
   }
 
   private stepCampers(dt: number): void {
-    // Slot numbers are per counselor, not derived from camper id. That keeps the first child found
-    // close behind the player even if it happens to be camper #6 in the deterministic hide list.
     const nextSlot = new Map<number, number>();
 
     for (const c of this.campers.values()) {
@@ -221,10 +219,6 @@ export class HostSim {
 
       const px = pl.state.p[0], pz = pl.state.p[2];
       let camperToPlayer = Math.hypot(px - c.x, pz - c.z);
-
-      // Because a follower is now hard-bounded to the counselor, boarding can use a much tighter
-      // distance than the old 13 m leash. This prevents campers across a building from teleporting
-      // into the bus just because the counselor reached extraction.
       if (this.inBusZone(px, pz) && camperToPlayer <= FOLLOW_HARD_MAX + .5) { this.seatCamper(c); continue; }
 
       const slot = nextSlot.get(c.foundBy) ?? 0;
@@ -238,10 +232,6 @@ export class HostSim {
       const tx = px - fx * back + rx * side;
       const tz = pz - fz * back + rz * side;
 
-      // If a camper ever gets outside the visible escort envelope, regroup them at their formation
-      // slot immediately. This is collision-resolved, so the correction does not put them inside a
-      // tree/wall. In ordinary movement they never reach this branch; it is a safety net for lag,
-      // teleports and corners that previously left children tens of metres behind.
       if (camperToPlayer > FOLLOW_HARD_MAX) {
         const regroup = { x: tx, y: terrainHeight(tx, tz, this.layout), z: tz };
         resolveCapsule(regroup, 0.22, 1.05, this.colliders, WORLD_HALF);
@@ -261,8 +251,6 @@ export class HostSim {
         c.x = tryPos.x; c.z = tryPos.z;
       }
 
-      // Enforce the range again after collision resolution. A collider can shove a child sideways;
-      // if that makes the leash too long, snap back to the resolved formation point this tick.
       camperToPlayer = Math.hypot(px - c.x, pz - c.z);
       if (camperToPlayer > FOLLOW_HARD_MAX) {
         const regroup = { x: tx, y: terrainHeight(tx, tz, this.layout), z: tz };
