@@ -3,7 +3,7 @@ export const TICK_MS = 1000 / TICK_HZ;
 export const MIN_CAP = 4;
 export const MAX_CAP = 15;
 export type RejectReason = 'full' | 'started' | 'version';
-export const PROTOCOL = 6;
+export const PROTOCOL = 7;
 
 export interface PlayerInfo { id: number; name: string; ready: boolean; peer: string }
 export type Vec3 = [number, number, number];
@@ -24,7 +24,7 @@ export interface GameSnap {
 }
 
 export type Msg =
-  | { t: 'hello'; name: string; v: number }
+  | { t: 'hello'; name: string; v: number; resume?: number }
   | { t: 'welcome'; id: number; max: number }
   | { t: 'reject'; reason: RejectReason }
   | { t: 'roster'; players: PlayerInfo[]; max: number }
