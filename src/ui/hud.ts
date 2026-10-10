@@ -64,10 +64,26 @@ export class Hud {
   showResult(kind: 'win' | 'lose'): void {
     if (this.result) return;
     document.exitPointerLock?.();
-    this.result = h('div', { cls: 'result', id: 'hud-result' },
-      h('h1', {}, kind === 'win' ? 'CAMPERS SAFE!' : 'CAUGHT!'),
-      h('p', {}, kind === 'win' ? 'Everyone piles onto the bus as the camp disappears into the dark.' : 'Something heard you...'),
-      h('button', { id: 'btn-menu', onclick: () => { location.href = location.pathname; } }, 'Back to the registration desk'));
+    if (kind === 'win') {
+      const windows = h('div', { cls: 'outro-windows' },
+        ...Array.from({ length: 7 }, (_, i) => h('span', { cls: 'outro-window', 'data-seat': String(i + 1) }, '●')));
+      const bus = h('div', { cls: 'outro-bus', 'aria-label': 'Camp bus leaving with all seven campers' },
+        h('div', { cls: 'outro-bus-body' }, windows, h('strong', {}, 'CAMP GLOWSTICK')),
+        h('div', { cls: 'outro-wheel left' }), h('div', { cls: 'outro-wheel right' }));
+      this.result = h('div', { cls: 'result result-win', id: 'hud-result' },
+        h('div', { cls: 'outro-sky' }, h('div', { cls: 'outro-moon' })),
+        h('div', { cls: 'outro-road' }, bus),
+        h('div', { cls: 'outro-card' },
+          h('div', { cls: 'outro-kicker' }, 'HEADCOUNT 7 / 7'),
+          h('h1', {}, 'CAMPERS SAFE!'),
+          h('p', {}, 'Doors shut. Gary is nowhere in sight. The bus pulls away while the woods disappear behind you.'),
+          h('button', { id: 'btn-menu', onclick: () => { location.href = location.pathname; } }, 'Back to the registration desk')));
+    } else {
+      this.result = h('div', { cls: 'result result-lose', id: 'hud-result' },
+        h('h1', {}, 'CAUGHT!'),
+        h('p', {}, 'Something heard you...'),
+        h('button', { id: 'btn-menu', onclick: () => { location.href = location.pathname; } }, 'Back to the registration desk'));
+    }
     this.root.append(this.result);
   }
 }
