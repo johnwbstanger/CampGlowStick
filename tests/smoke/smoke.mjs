@@ -54,7 +54,13 @@ async function startGame(h, guests) {
   for (const g of guests) await g.click('#btn-ready');
   await h.waitForFunction(() => !document.querySelector('#btn-start').disabled, null, { timeout: 10000 });
   await h.click('#btn-start');
-  for (const p of [h, ...guests]) await p.waitForFunction(() => window.__cg?.ready && window.__cg.frames() > 5, null, { timeout: 90000 });
+  for (const p of [h, ...guests]) {
+    await p.waitForSelector('#arrival-briefing', { timeout: 10000 });
+    const text = await p.innerText('#arrival-briefing');
+    assert(text.includes('GARY') && text.includes('scratching') && text.includes('gun'), `${p.label} missing Gary briefing content`);
+    await p.click('#btn-arrive');
+  }
+  await Promise.all([h, ...guests].map((p) => p.waitForFunction(() => window.__cg?.ready && window.__cg.frames() > 5, null, { timeout: 90000 })));
 }
 const cg = (p, fn, arg) => p.evaluate(fn, arg);
 
@@ -78,7 +84,7 @@ try {
     }
   });
 
-  await check('all three clients enter the same game world', async () => {
+  await check('Gary briefing leads all three clients into one game world', async () => {
     await startGame(H, [g1, g2]);
     for (const p of [H, g1, g2]) {
       assert(await p.locator('canvas.game').count() === 1, 'missing game canvas');
@@ -99,13 +105,19 @@ try {
     assert(s.distinct > 15 && s.lit > 150, `blank-looking world ${JSON.stringify(s)}`);
   });
 
-  await check('camper interaction syncs without loading a second world', async () => {
+  await check('camper interaction state reaches every client', async () => {
     const camper = (await cg(H, () => window.__cg.campers()))[0]; assert(camper, 'camper exists');
     await H.evaluate(([x, z]) => { window.__cg.teleport(x, z + .55); window.__cg.look(Math.PI); }, [camper.x, camper.z]);
     await sleep(500);
     await H.evaluate(() => window.__cg.act('pick'));
-    for (const p of [H, g1, g2]) {
-      await p.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 10000 });
+    await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 5000 });
+    for (const p of [g1, g2]) {
+      try {
+        await p.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 20000 });
+      } catch (e) {
+        const state = await p.evaluate((id) => ({ camper: window.__cg.campers().find((c) => c.id === id), snap: window.__cg.snap() }), camper.id);
+        throw new Error(`${p.label} never received camper ${camper.id} found state; latest=${JSON.stringify(state)}`);
+      }
     }
   });
 
@@ -118,14 +130,11 @@ try {
     assert(Math.hypot(moved.x - before.x, moved.z - before.z) > 1, 'camper did not follow rescuer');
     let local = await cg(H, () => window.__cg.local());
     assert(Math.hypot(moved.x - local.x, moved.z - local.z) <= 5.7, 'camper escaped the escort leash');
-
-    // A large network correction/teleport must not leave the camper stranded half a map away.
     await H.evaluate(([x, z]) => window.__cg.teleport(x + 18, z + 8), [local.x, local.z]);
     await sleep(700);
     moved = (await cg(H, () => window.__cg.campers()))[0];
     local = await cg(H, () => window.__cg.local());
     assert(Math.hypot(moved.x - local.x, moved.z - local.z) <= 5.7, 'camper did not regroup after a large correction');
-
     await H.evaluate(() => window.__cg.teleport(28, 2));
     await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.rescued), camper.id, { timeout: 18000 });
     moved = (await cg(H, () => window.__cg.campers()))[0];
