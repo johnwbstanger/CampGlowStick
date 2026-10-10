@@ -3,7 +3,7 @@ export const TICK_MS = 1000 / TICK_HZ;
 export const MIN_CAP = 4;
 export const MAX_CAP = 15;
 export type RejectReason = 'full' | 'started' | 'version';
-export const PROTOCOL = 5;
+export const PROTOCOL = 6;
 
 export interface PlayerInfo { id: number; name: string; ready: boolean; peer: string }
 export type Vec3 = [number, number, number];
@@ -11,8 +11,6 @@ export type Vec3 = [number, number, number];
 export interface PlayerState {
   p: Vec3; yaw: number; pitch: number; crouch: boolean; sprint: boolean; moving: boolean;
   held: number; flash: boolean;
-  /** @deprecated Always 100. Kept temporarily so old snapshot/debug shapes do not destabilize this pass. */
-  stamina: number;
 }
 export interface ItemDef { id: number; model: string; kind: 'prop' | 'loot' | 'glow'; color?: string; mat: string }
 export type ItemSnap = [number, number, number, number, number, number, number, number, number];
