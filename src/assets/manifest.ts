@@ -17,8 +17,13 @@ export const MANIFEST = {
   counselorFemale: q('Smooth_Female_Casual', { h: 1.74 }),
 
   monster: k('graveyard/character-zombie', { h: 2.2 }),
-  cabin: k('survival/structure', { w: 7 }),
-  shed: k('survival/structure-metal', { w: 5 }),
+
+  // Real Quaternius building art replaces the bare Kenney post frames. These stay gameplay-
+  // traversable for this pass so imported art can never reintroduce an invisible wall.
+  cabin: q('House1', { w: 7.5 }),
+  shed: q('House2', { w: 6.5 }),
+  lodge: q('Building1_Small', { w: 10.0 }),
+
   bunk: k('furniture/bedBunk', { w: 2.2 }),
   bedSingle: k('furniture/bedSingle', { w: 2.0 }),
   chair: k('furniture/chair', { h: 0.9 }),
@@ -49,7 +54,6 @@ export const MANIFEST = {
   rock: k('nature/rock_largeA', { w: 2.2 }),
   boulder: k('survival/rock-a', { w: 1.6 }),
   sign: k('survival/signpost', { h: 1.4 }),
-  // Real school-bus silhouette from Quaternius Public Transport Pack instead of the Car Kit van.
   bus: q('SchoolBus', { w: 9.4 }),
   ground: k('nature/ground_grass', { w: 4 }),
 } satisfies Record<string, AssetDef>;
@@ -58,7 +62,7 @@ export type AssetName = keyof typeof MANIFEST;
 export const ALWAYS_PRELOAD: AssetName[] = [
   'table', 'chair', 'bookshelf', 'bedSingle', 'sink', 'teddy',
   'lantern', 'campfire', 'logs', 'crate', 'cooler', 'radio', 'mug', 'can', 'backpack', 'bucket', 'barrel', 'paddle',
-  'camperMale', 'camperFemale', 'counselorMale', 'counselorFemale',
+  'camperMale', 'camperFemale', 'counselorMale', 'counselorFemale', 'cabin', 'shed', 'lodge',
 ];
 export const HDRI_FILE = 'hdri/venice_sunset_1k.hdr';
 export const camperName = (i: number): AssetName => `camper${(i % CHARS.length) + 1}` as AssetName;
