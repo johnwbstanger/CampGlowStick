@@ -19,8 +19,10 @@ const CAMPER_HIDES: [number, number][] = [
   [-78, -43], [-42, -58], [19, -55], [65, -39], [-67, 21], [-20, 32], [42, 28],
   [82, 7], [-8, 58], [-88, 76], [97, 59], [-101, -39], [78, -7], [-45, 88],
 ];
+// Local-space seat coordinates inside the full-size camp bus. They are transformed by the actual
+// bus placement/rotation, so all seven rescued campers visibly end up inside the vehicle.
 const BUS_SEATS: [number, number][] = [
-  [-2.7, .72], [-2.7, -.55], [-1.3, .72], [-1.3, -.55], [.2, .72], [.2, -.55], [1.65, .72],
+  [-3.0, .62], [-3.0, -.62], [-1.75, .62], [-1.75, -.62], [-.5, .62], [-.5, -.62], [.78, .62],
 ];
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -73,7 +75,6 @@ export class HostSim {
     const defs: ItemDef[] = layout.items.map((s, i) => { spawnById.set(i + 1, [s.x, s.z]); return { id: i + 1, model: s.model, kind: s.kind, mat: propInfo(s.model).mat }; });
     const gunId = defs.length + 1;
     defs.push({ id: gunId, model: 'directorGun', kind: 'prop', mat: 'metal' });
-    // On the director's desk, not randomly somewhere in the map.
     spawnById.set(gunId, [-27, 3.35]);
     return { defs, spawnById };
   }
@@ -192,9 +193,18 @@ export class HostSim {
     this.net.broadcast({ t: 'spawn', def }); this.noise(pl.state.p[0], pl.state.p[2], 1, 'glow', 'glow'); if (pl.state.held < 0) this.hold(id, pl, it);
   }
 
+  private busPlacement(): { x: number; z: number; rot: number } {
+    return this.layout.statics.find((s) => s.name === 'bus') ?? { x: this.layout.extraction.x, z: this.layout.extraction.z, rot: 0 };
+  }
+
   private seatCamper(c: SimCamper): void {
-    const ex = this.layout.extraction, seat = BUS_SEATS[Math.min(this.rescued, BUS_SEATS.length - 1)];
-    c.x = ex.x + seat[0]; c.z = ex.z + seat[1]; c.y = terrainHeight(c.x, c.z, this.layout) + 0.18;
+    if (c.rescued) return;
+    const bus = this.busPlacement();
+    const seat = BUS_SEATS[Math.min(this.rescued, BUS_SEATS.length - 1)];
+    const cos = Math.cos(bus.rot), sin = Math.sin(bus.rot);
+    c.x = bus.x + seat[0] * cos + seat[1] * sin;
+    c.z = bus.z - seat[0] * sin + seat[1] * cos;
+    c.y = terrainHeight(c.x, c.z, this.layout) + 0.18;
     c.rescued = true; c.foundBy = -1; this.rescued++;
     this.noise(c.x, c.z, 0.7, 'step', 'interaction');
   }
@@ -204,16 +214,41 @@ export class HostSim {
       if (c.rescued || c.foundBy < 0) continue;
       const pl = this.players.get(c.foundBy);
       if (!pl || !pl.alive) { c.foundBy = -1; continue; }
+
+      const px = pl.state.p[0], pz = pl.state.p[2];
+      const camperToPlayer = Math.hypot(px - c.x, pz - c.z);
+
+      // The rescuer reaching the bus is the boarding trigger. A following camper who is reasonably
+      // close is moved into a unique interior seat, rather than being left standing behind the bus.
+      if (this.inBusZone(px, pz) && camperToPlayer < 13) { this.seatCamper(c); continue; }
+
       const [fx, fz] = this.forward(pl);
-      const tx = pl.state.p[0] - fx * 1.45, tz = pl.state.p[2] - fz * 1.45;
+      const rank = Math.floor(c.id / 3);
+      const lane = (c.id % 3) - 1;
+      const back = 1.65 + rank * 0.72;
+      const side = lane * 0.72;
+      const rx = -fz, rz = fx;
+      const tx = px - fx * back + rx * side;
+      const tz = pz - fz * back + rz * side;
       const dx = tx - c.x, dz = tz - c.z, d = Math.hypot(dx, dz);
-      if (d > 0.15) {
-        const s = Math.min(d, 4.2 * dt);
-        const tryPos = { x: c.x + dx / d * s, y: terrainHeight(c.x, c.z, this.layout), z: c.z + dz / d * s };
-        resolveCapsule(tryPos, 0.24, 1.15, this.colliders, WORLD_HALF);
+
+      // Match the counselor's pace, with progressively stronger catch-up when a camper gets hung up.
+      // This preserves the feeling of escorting a child instead of dragging a slow NPC on a leash.
+      let speed = pl.state.sprint ? 7.1 : pl.state.moving ? 5.0 : 3.8;
+      if (camperToPlayer > 4) speed = Math.max(speed, 7.8);
+      if (camperToPlayer > 8) speed = Math.max(speed, 10.5);
+      if (camperToPlayer > 13) speed = Math.max(speed, 12.5);
+
+      if (d > 0.42) {
+        const s = Math.min(Math.max(0, d - 0.28), speed * dt);
+        const tryPos = { x: c.x + dx / (d || 1) * s, y: terrainHeight(c.x, c.z, this.layout), z: c.z + dz / (d || 1) * s };
+        resolveCapsule(tryPos, 0.22, 1.05, this.colliders, WORLD_HALF);
         c.x = tryPos.x; c.z = tryPos.z;
       }
       c.y = terrainHeight(c.x, c.z, this.layout);
+
+      // Keep the old direct-zone trigger too, so a camper that enters the bus before the counselor
+      // is seated immediately.
       if (this.inBusZone(c.x, c.z)) this.seatCamper(c);
     }
   }
