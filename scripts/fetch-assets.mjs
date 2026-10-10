@@ -1,11 +1,12 @@
-// Re-downloads every external asset used by Camp Glowstick (all CC0) and regenerates public/assets/CREDITS.md.
+// Re-downloads every external asset used by Camp Glowstick and regenerates public/assets/CREDITS.md.
 // Usage: node scripts/fetch-assets.mjs [--force]
 import { mkdir, writeFile, access } from 'node:fs/promises';
 import { dirname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'assets');
-// Kenney's CC0 packs, mirrored on GitHub at a pinned commit (kenney.nl itself is the canonical source).
+
+// Kenney CC0 packs, mirrored on GitHub at a pinned commit.
 const MIRROR = 'shorepine/kenney';
 const SHA = '3694c6879e487c108f55677be7dd2ca75b07cc3b';
 const RAW = `https://raw.githubusercontent.com/${MIRROR}/${SHA}`;
@@ -23,14 +24,42 @@ const MODELS = {
   'blocky-characters': 'abcdefgh'.split('').map((c) => `character-${c}`),
   survival: ['structure', 'structure-metal', 'box-large', 'box', 'bucket', 'barrel', 'bottle', 'campfire-pit', 'bedroll-packed', 'signpost', 'rock-a', 'tool-axe'],
   nature: ['tent_detailedClosed', 'canoe', 'canoe_paddle', 'tree_pineTallA', 'tree_pineTallB', 'tree_pineDefaultA', 'ground_grass', 'log_stack', 'rock_largeA'],
-  // Furniture Kit additions are intentionally imported instead of being rebuilt as primitive boxes.
-  // These are used to make cabins, dining areas, bathhouse and hiding spots feel authored and inhabited.
   furniture: ['bedBunk', 'bedSingle', 'chair', 'table', 'bookcaseOpen', 'bathroomSink', 'bear', 'radio'],
   holiday: ['lantern', 'sock-red'],
   graveyard: ['character-zombie'],
   food: ['mug', 'can'],
   car: ['van'],
 };
+
+// Quaternius human-authored CC0 assets. Pinned to an immutable repository commit so art does not
+// silently change between deployments. These replace the placeholder van and procedural people.
+const Q_REPO = 'beep2bleep/FreeAssetsByKenneyNLandQuaternius';
+const Q_SHA = 'dea756baf3b3a4889d8c245e456a4791f961578a';
+const Q_ROOT = 'FreeModels by Quaternius[Patreon]';
+const qRaw = (rel) => `https://raw.githubusercontent.com/${Q_REPO}/${Q_SHA}/${[Q_ROOT, rel].join('/').split('/').map(encodeURIComponent).join('/')}`;
+const Q_ASSETS = [
+  {
+    file: 'models/quaternius/SchoolBus.fbx',
+    source: 'Vehicles/Public Transport Pack - Feb 2017/FBX/SchoolBus.fbx',
+    name: 'SchoolBus', pack: 'Public Transport Pack',
+  },
+  {
+    file: 'models/quaternius/Smooth_Male_Casual.fbx',
+    source: 'Characters and Animals/Animated Men Characters - Feb 2019/FBX/Smooth_Male_Casual.fbx',
+    name: 'Smooth_Male_Casual', pack: 'Animated Men Characters',
+  },
+  {
+    file: 'models/quaternius/Smooth_Male_Shirt.fbx',
+    source: 'Characters and Animals/Animated Men Characters - Feb 2019/FBX/Smooth_Male_Shirt.fbx',
+    name: 'Smooth_Male_Shirt', pack: 'Animated Men Characters',
+  },
+  {
+    file: 'models/quaternius/Smooth_Female_Casual.fbx',
+    source: 'Characters and Animals/Animated Women Characters - Feb 2019/FBX/Smooth_Female_Casual.fbx',
+    name: 'Smooth_Female_Casual', pack: 'Animated Women Characters',
+  },
+];
+
 const HDRI = {
   file: 'hdri/venice_sunset_1k.hdr',
   url: 'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/equirectangular/venice_sunset_1k.hdr',
@@ -69,22 +98,26 @@ for (const [kit, files] of Object.entries(MODELS)) {
     rows.push(`| ${f} | ${KITS[kit][0]} | Kenney | [${KITS[kit][1].replace('https://', '')}](${KITS[kit][1]}) | CC0 1.0 | \`${rel}\` |`);
   }
 }
+
+for (const q of Q_ASSETS) {
+  await save(q.file, qRaw(q.source));
+  rows.push(`| ${q.name} | ${q.pack} | Quaternius | [github.com/${Q_REPO}](https://github.com/${Q_REPO}) | CC0 1.0 | \`${q.file}\` |`);
+}
+
 await save(HDRI.file, HDRI.url);
 rows.push(`| ${HDRI.name} | HDRI | ${HDRI.author} | [${HDRI.source.replace('https://', '')}](${HDRI.source}) | ${HDRI.license} | \`${HDRI.file}\` |`);
 
 const credits = `# Asset credits
 
-Every 3D model, texture and HDRI used by Camp Glowstick is licensed CC0 (public domain) and is loaded from an
-external file. Environment dressing deliberately prefers human-authored asset packs over generated primitive
-stand-ins. Regenerate this file and re-download everything with \`npm run fetch-assets\` (pinned to commit
-\`${SHA.slice(0, 7)}\` of the [${MIRROR}](https://github.com/${MIRROR}) mirror of Kenney's CC0 packs).
+Camp Glowstick deliberately prefers human-authored asset packs over generated primitive stand-ins. Kenney and
+Quaternius assets below are CC0/public domain. Regenerate the exact pinned set with \`npm run fetch-assets\`.
 
-Kenney's glTF files reference their colour atlas by relative URI (\`Textures/*.png\`), so those PNGs live beside
-the GLBs in \`models/<kit>/Textures/\` and are covered by the same CC0 license as the kit.
+Kenney assets are pinned to commit \`${SHA.slice(0, 7)}\` of [${MIRROR}](https://github.com/${MIRROR}).
+Quaternius assets are pinned to commit \`${Q_SHA.slice(0, 7)}\` of [${Q_REPO}](https://github.com/${Q_REPO}); the
+repository's Quaternius License.txt declares the models CC0 1.0 Universal.
 
-Substitutions (no exact CC0 match was found, so the closest imported asset stands in): \`cooler\` = Survival Kit
-\`box-large\` crate, \`backpack\` = Survival Kit \`bedroll-packed\`, \`cabin\` = Survival Kit \`structure\`, \`shed\` =
-Survival Kit \`structure-metal\`, \`bus\` = Car Kit \`van\`, \`monster\` = Graveyard Kit \`character-zombie\`.
+Kenney glTF files may reference their colour atlas by relative URI (\`Textures/*.png\`), so those PNGs live beside
+the GLBs in \`models/<kit>/Textures/\` and are covered by the same license as the kit.
 
 | Asset | Pack | Author | Source URL | License | File |
 | --- | --- | --- | --- | --- | --- |
