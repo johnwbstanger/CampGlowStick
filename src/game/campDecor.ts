@@ -1,93 +1,143 @@
 import * as THREE from 'three';
+import { getModel } from '../assets/loader';
+import type { AssetName } from '../assets/manifest';
 import type { Layout } from './layout';
+import { mulberry32 } from './layout';
 import { terrainHeight } from './terrain';
 import { LANDMARKS } from './landmarks';
+import { poisson2d } from '../vendor/poisson2d';
 
-const wood = new THREE.MeshStandardMaterial({ color: '#6b4a32', roughness: .96 });
-const dark = new THREE.MeshStandardMaterial({ color: '#24282a', roughness: .72 });
-const amber = new THREE.MeshStandardMaterial({ color: '#f1a446', emissive: '#f08a2b', emissiveIntensity: 3.5, roughness: .45 });
-const stone = new THREE.MeshStandardMaterial({ color: '#6f7169', roughness: 1 });
+/** Assets required only for authored camp dressing, not dynamic loot. */
+export const CAMP_DECOR_ASSETS: AssetName[] = [
+  'table', 'chair', 'bookshelf', 'bedSingle', 'sink', 'teddy',
+  'lantern', 'campfire', 'logs', 'crate', 'cooler', 'radio', 'mug', 'can', 'backpack', 'bucket', 'barrel', 'paddle',
+];
 
-function box(w: number, h: number, d: number, mat: THREE.Material): THREE.Mesh {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.castShadow = m.receiveShadow = true; return m;
+function place(name: AssetName, x: number, z: number, rot = 0, y = 0): THREE.Object3D {
+  const o = getModel(name);
+  o.position.set(x, y, z);
+  o.rotation.y = rot;
+  return o;
 }
-function cyl(r: number, h: number, mat: THREE.Material, seg = 12): THREE.Mesh {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, seg), mat); m.castShadow = m.receiveShadow = true; return m;
+
+function localPoint(cx: number, cz: number, rot: number, lx: number, lz: number): [number, number] {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  return [cx + lx * c + lz * s, cz - lx * s + lz * c];
 }
 
-function picnicTable(x: number, z: number, rot: number, layout: Layout): THREE.Group {
-  const g = new THREE.Group(); g.position.set(x, terrainHeight(x, z, layout), z); g.rotation.y = rot;
-  const top = box(2.5, .12, .82, wood); top.position.y = .78; g.add(top);
+function furnishedTable(x: number, z: number, rot: number, lantern = true): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'imported-table-scene';
+  g.add(place('table', x, z, rot));
+  for (const [lx, lz, r] of [[-1.25, 0, Math.PI / 2], [1.25, 0, -Math.PI / 2], [0, -1.0, 0], [0, 1.0, Math.PI]] as [number, number, number][]) {
+    const [px, pz] = localPoint(x, z, rot, lx, lz);
+    g.add(place('chair', px, pz, rot + r));
+  }
+  if (lantern) {
+    const l = place('lantern', x + Math.cos(rot) * .3, z - Math.sin(rot) * .3, rot, .88);
+    g.add(l);
+    const light = new THREE.PointLight('#ffb15a', 9, 6.5, 2);
+    light.position.set(x, 1.22, z);
+    g.add(light);
+  }
   for (const side of [-1, 1]) {
-    const bench = box(2.5, .11, .34, wood); bench.position.set(0, .46, side * .86); g.add(bench);
-    for (const x0 of [-.82, .82]) { const leg = box(.12, .68, .12, dark); leg.position.set(x0, .38, side * .48); leg.rotation.z = side * .22; g.add(leg); }
+    const [mx, mz] = localPoint(x, z, rot, side * .48, .15);
+    g.add(place(side > 0 ? 'mug' : 'can', mx, mz, rot + side * .2, .9));
   }
   return g;
 }
 
-function crateStack(x: number, z: number, rot: number, layout: Layout): THREE.Group {
-  const g = new THREE.Group(); g.position.set(x, terrainHeight(x, z, layout), z); g.rotation.y = rot;
+function litCampfire(x: number, z: number, rot = 0): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'imported-campfire-scene';
+  g.add(place('campfire', x, z, rot));
+  const light = new THREE.PointLight('#ff8c36', 42, 12, 2);
+  light.position.set(x, 1.0, z);
+  g.add(light);
   for (let i = 0; i < 4; i++) {
-    const c = box(.65 + (i % 2) * .08, .5, .6, new THREE.MeshStandardMaterial({ color: i % 2 ? '#806044' : '#9a724f', roughness: 1 }));
-    c.position.set((i % 2) * .48, .25 + Math.floor(i / 2) * .52, (i % 3) * .18); c.rotation.y = (i % 2 ? .12 : -.08); g.add(c);
+    const a = i * Math.PI / 2 + .35;
+    g.add(place('logs', x + Math.cos(a) * 2.35, z + Math.sin(a) * 2.35, a + Math.PI / 2));
   }
-  const cooler = box(.78, .46, .5, new THREE.MeshStandardMaterial({ color: '#d8e1d9', roughness: .8 })); cooler.position.set(-.62, .23, .15); g.add(cooler);
   return g;
 }
 
-function campfire(x: number, z: number, layout: Layout): THREE.Group {
-  const g = new THREE.Group(); const y = terrainHeight(x, z, layout); g.position.set(x, y, z);
-  for (let i = 0; i < 10; i++) {
-    const a = (i / 10) * Math.PI * 2, s = cyl(.16, .34, stone, 8); s.rotation.z = Math.PI / 2; s.position.set(Math.cos(a) * .72, .12, Math.sin(a) * .72); s.rotation.y = a; g.add(s);
+function decorateCabin(g: THREE.Group, x: number, z: number, rot: number, index: number): void {
+  // Cabins get small authored porch vignettes instead of a ring of random props.
+  const rng = mulberry32(0xC0FFEE + index * 977);
+  const front = 3.9;
+  const side = index % 2 ? 1 : -1;
+  const [cx, cz] = localPoint(x, z, rot, side * 1.55, front);
+  g.add(place('chair', cx, cz, rot + Math.PI));
+  const [lx, lz] = localPoint(x, z, rot, -side * 1.25, front + .1);
+  g.add(place('lantern', lx, lz, rot, .03));
+  const light = new THREE.PointLight('#f2b766', 7, 5, 2);
+  light.position.set(lx, 1.0, lz);
+  g.add(light);
+  const [bx, bz] = localPoint(x, z, rot, side * (2.25 + rng() * .35), front - .15);
+  g.add(place(index % 3 ? 'cooler' : 'backpack', bx, bz, rot + (rng() - .5) * .25));
+  const [tx, tz] = localPoint(x, z, rot, -side * 2.2, front - .3);
+  if (index % 4 === 0) g.add(place('teddy', tx, tz, rot + .2));
+}
+
+function decorateLandmark(g: THREE.Group, kind: string, x: number, z: number, rot: number): void {
+  if (kind === 'dining') {
+    for (const [lx, lz] of [[-4.2, -1.8], [0, -1.8], [4.2, -1.8], [-4.2, 1.8], [0, 1.8], [4.2, 1.8]] as [number, number][]) {
+      const [px, pz] = localPoint(x, z, rot, lx, lz); g.add(furnishedTable(px, pz, rot, false));
+    }
+  } else if (kind === 'director') {
+    const [dx, dz] = localPoint(x, z, rot, 0, -.8); g.add(furnishedTable(dx, dz, rot, true));
+    for (const [lx, lz, name] of [[-3.1, 1.5, 'bookshelf'], [3.0, 1.5, 'bookshelf']] as [number, number, AssetName][]) {
+      const [px, pz] = localPoint(x, z, rot, lx, lz); g.add(place(name, px, pz, rot + Math.PI));
+    }
+    const [rx, rz] = localPoint(x, z, rot, .4, -.5); g.add(place('radio', rx, rz, rot, .9));
+  } else if (kind === 'bathhouse') {
+    for (const lx of [-3.1, 0, 3.1]) { const [px, pz] = localPoint(x, z, rot, lx, 1.9); g.add(place('sink', px, pz, rot + Math.PI)); }
+  } else if (kind === 'arts') {
+    for (const [lx, lz] of [[-2.7, -1.5], [2.7, -1.5], [-2.7, 1.6], [2.7, 1.6]] as [number, number][]) {
+      const [px, pz] = localPoint(x, z, rot, lx, lz); g.add(furnishedTable(px, pz, rot, false));
+    }
+  } else if (kind === 'kitchen') {
+    for (const [lx, lz] of [[-2.8, 1.6], [0, 1.6], [2.8, 1.6]] as [number, number][]) {
+      const [px, pz] = localPoint(x, z, rot, lx, lz); g.add(place('table', px, pz, rot));
+      g.add(place('crate', px + .5, pz + .25, rot + .2));
+    }
   }
-  for (const r of [-.42, .42]) { const log = cyl(.11, 1.1, wood, 9); log.rotation.z = Math.PI / 2; log.rotation.y = r > 0 ? .65 : -.65; log.position.y = .18; g.add(log); }
-  const flame = new THREE.Mesh(new THREE.SphereGeometry(.22, 12, 8), amber); flame.scale.set(.8, 1.8, .8); flame.position.y = .45; g.add(flame);
-  const light = new THREE.PointLight('#ff9a38', 54, 12, 2); light.position.y = 1.15; g.add(light);
-  return g;
 }
 
-function streetlight(x: number, z: number, layout: Layout): THREE.Group {
-  const g = new THREE.Group(); g.position.set(x, terrainHeight(x, z, layout), z);
-  const pole = cyl(.07, 3.6, dark, 10); pole.position.y = 1.8; g.add(pole);
-  const arm = box(.75, .07, .07, dark); arm.position.set(.32, 3.47, 0); g.add(arm);
-  const lamp = new THREE.Mesh(new THREE.SphereGeometry(.13, 12, 8), amber); lamp.position.set(.66, 3.3, 0); g.add(lamp);
-  const light = new THREE.PointLight('#efad62', 28, 11, 2); light.position.set(.66, 3.15, 0); g.add(light);
-  return g;
+function addStorageYard(g: THREE.Group, cx: number, cz: number, seed: number): void {
+  const rng = mulberry32(seed);
+  const pts = poisson2d({ width: 12, height: 8, minDistance: 1.65, maxDistance: 2.8, tries: 24, rng });
+  const pool: AssetName[] = ['crate', 'cooler', 'bucket', 'barrel', 'backpack'];
+  pts.slice(0, 18).forEach(([px, pz], i) => {
+    const name = pool[i % pool.length];
+    g.add(place(name, cx + px - 6, cz + pz - 4, rng() * Math.PI * 2));
+  });
 }
 
-function porchLight(x: number, y: number, z: number, parent: THREE.Group): void {
-  const bulb = new THREE.Mesh(new THREE.SphereGeometry(.075, 10, 8), amber); bulb.position.set(x, y, z); parent.add(bulb);
-  const light = new THREE.PointLight('#f2b766', 15, 7, 2); light.position.set(x, y - .1, z); parent.add(light);
-}
-
-function addBusWheels(g: THREE.Group, layout: Layout): void {
-  const bus = layout.statics.find((s) => s.name === 'bus'); if (!bus) return;
-  const y = terrainHeight(bus.x, bus.z, layout);
-  for (const lx of [-3.1, 3.0]) for (const lz of [-1.52, 1.52]) {
-    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(.54, .54, .28, 18), dark);
-    wheel.rotation.z = Math.PI / 2;
-    wheel.position.set(bus.x + lz, y + .52, bus.z + lx); wheel.castShadow = true; g.add(wheel);
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(.22, .22, .3, 16), new THREE.MeshStandardMaterial({ color: '#888b86', metalness: .35, roughness: .5 }));
-    hub.rotation.z = Math.PI / 2; hub.position.copy(wheel.position); g.add(hub);
-  }
-}
-
-/** Visual organization pass: repeated camp-use zones instead of random scatter. */
+/**
+ * Lived-in organization pass. All visible furniture/props here are imported GLBs;
+ * the only generated geometry left in this module is light itself.
+ */
 export function buildCampDecor(layout: Layout): THREE.Group {
-  const g = new THREE.Group(); g.name = 'camp-decor';
+  const g = new THREE.Group();
+  g.name = 'camp-decor-imported';
 
-  const tables: [number, number, number][] = [[-7, 8, .2], [7, 8, -.2], [-8, 1, -.1], [8, 1, .15], [-11, 57, .3], [3, 58, -.25], [83, -10, .4]];
-  for (const t of tables) g.add(picnicTable(t[0], t[1], t[2], layout));
-  for (const [x, z] of [[0, 6], [-55, 26], [50, 27], [-7, 58]] as [number, number][]) g.add(campfire(x, z, layout));
+  layout.statics.filter((s) => s.name === 'cabin').forEach((s, i) => decorateCabin(g, s.x, s.z, s.rot, i));
+  LANDMARKS.forEach((b) => decorateLandmark(g, b.kind, b.x, b.z, b.rot));
 
-  const stacks: [number, number, number][] = [[-79, -42, .2], [-40, -56, -.2], [22, -54, .15], [63, -38, -.25], [-65, 27, .3], [-18, 37, -.15], [44, 33, .2], [92, -28, .3], [-98, -39, -.2]];
-  for (const s of stacks) g.add(crateStack(s[0], s[1], s[2], layout));
+  for (const [x, z] of [[0, 6], [-55, 26], [50, 27], [-7, 58]] as [number, number][]) g.add(litCampfire(x, z));
+  for (const [x, z, r] of [[-9, 8, .15], [8, 8, -.2], [-9, 57, .25], [4, 58, -.25], [80, -10, .4]] as [number, number, number][]) g.add(furnishedTable(x, z, r, true));
 
-  for (const [x, z] of [[-54, 23], [-25, 13], [28, 2], [57, 11], [80, 19], [-43, -63]] as [number, number][]) g.add(streetlight(x, z, layout));
+  // Maintenance and waterfront get structured yards using a vendored MIT Poisson sampler,
+  // so objects feel naturally spaced instead of uniformly random or piled at world origin.
+  addStorageYard(g, -101, -42, 0xA11CE);
+  addStorageYard(g, 97, -29, 0xB00B5);
 
-  for (const s of layout.statics.filter((x) => x.name === 'cabin').filter((_, i) => i % 2 === 0)) porchLight(s.x, terrainHeight(s.x, s.z, layout) + 2.15, s.z, g);
-  for (const b of LANDMARKS) porchLight(b.x, terrainHeight(b.x, b.z, layout) + 2.35, b.z + b.d * .52, g);
+  // A few intentional activity props at the lake.
+  g.add(place('paddle', 82.8, -6.2, .15));
+  g.add(place('paddle', 83.6, -5.4, -.2));
+  g.add(place('cooler', 80.7, -7.0, .05));
+  g.add(place('bucket', 79.9, -6.3, .3));
 
-  addBusWheels(g, layout);
   return g;
 }
