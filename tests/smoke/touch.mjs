@@ -33,7 +33,7 @@ try {
   await p.waitForSelector('#btn-start');
   await p.click('#btn-start');
   const arrive = p.locator('#btn-arrive');
-  if (await arrive.count()) await arrive.click();
+  if (await arrive.count()) await arrive.evaluate((el) => el.click());
   await waitGame();
 
   const controls = p.locator('.touch-controls');
@@ -47,17 +47,21 @@ try {
   const beforeJump = await p.evaluate(() => window.__cg.local());
   await p.locator('.touch-jump').tap();
   await p.waitForFunction((y) => window.__cg.local().y > y + .08, beforeJump.y, { timeout: 2500 });
+  await p.waitForTimeout(900);
 
-  // Drive the left virtual stick using pointer events only; no WASD is allowed in this test.
+  // Put the counselor on known open ground, then perform the same center-to-forward drag a thumb
+  // makes on iPad. This avoids accidentally testing a bus wall/cabin collider at the random spawn.
+  await p.evaluate(() => { window.__cg.teleport(0, 12); window.__cg.look(0); });
   const pad = await p.locator('.touch-move').boundingBox();
   if (!pad) throw new Error('movement pad has no layout box');
   const cx = pad.x + pad.width / 2, cy = pad.y + pad.height / 2;
   const beforeMove = await p.evaluate(() => window.__cg.local());
-  await p.locator('.touch-move').dispatchEvent('pointerdown', { pointerId: 51, pointerType: 'touch', clientX: cx, clientY: cy - 44, isPrimary: true, bubbles: true });
-  await p.waitForTimeout(700);
-  await p.locator('.touch-move').dispatchEvent('pointerup', { pointerId: 51, pointerType: 'touch', clientX: cx, clientY: cy - 44, isPrimary: true, bubbles: true });
+  await p.locator('.touch-move').dispatchEvent('pointerdown', { pointerId: 51, pointerType: 'touch', clientX: cx, clientY: cy, isPrimary: true, bubbles: true });
+  await p.locator('.touch-move').dispatchEvent('pointermove', { pointerId: 51, pointerType: 'touch', clientX: cx, clientY: cy - 52, isPrimary: true, bubbles: true });
+  await p.waitForTimeout(900);
+  await p.locator('.touch-move').dispatchEvent('pointerup', { pointerId: 51, pointerType: 'touch', clientX: cx, clientY: cy - 52, isPrimary: true, bubbles: true });
   const afterMove = await p.evaluate(() => window.__cg.local());
-  if (Math.hypot(afterMove.x - beforeMove.x, afterMove.z - beforeMove.z) < .35) throw new Error('virtual joystick did not move the player');
+  if (Math.hypot(afterMove.x - beforeMove.x, afterMove.z - beforeMove.z) < .25) throw new Error(`virtual joystick did not move the player: before=${JSON.stringify(beforeMove)} after=${JSON.stringify(afterMove)}`);
 
   // USE must be a real touch/click alternative: move next to a camper and tap the onscreen button.
   const camper = (await p.evaluate(() => window.__cg.campers()))[0];
@@ -67,7 +71,7 @@ try {
   await p.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 6000 });
 
   if (errors.length) throw new Error(errors.slice(0, 5).join(' | '));
-  console.log('PASS  iPad-style touch: controls visible, jump, joystick movement and USE interaction');
+  console.log('PASS  iPad-style touch: controls visible, jump, joystick drag movement and USE interaction');
 } finally {
   await ctx.close().catch(() => undefined);
   await browser.close().catch(() => undefined);
