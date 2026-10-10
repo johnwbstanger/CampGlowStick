@@ -32,7 +32,7 @@ const MODELS = {
 };
 
 // Quaternius human-authored CC0 assets. Pinned to an immutable repository commit so art does not
-// silently change between deployments. These replace the placeholder van and procedural people.
+// silently change between deployments.
 const Q_REPO = 'beep2bleep/FreeAssetsByKenneyNLandQuaternius';
 const Q_SHA = 'dea756baf3b3a4889d8c245e456a4791f961578a';
 const Q_ROOT = 'FreeModels by Quaternius[Patreon]';
@@ -57,6 +57,21 @@ const Q_ASSETS = [
     file: 'models/quaternius/Smooth_Female_Casual.fbx',
     source: 'Characters and Animals/Animated Women Characters - Feb 2019/FBX/Smooth_Female_Casual.fbx',
     name: 'Smooth_Female_Casual', pack: 'Animated Women Characters',
+  },
+  {
+    file: 'models/quaternius/House1.fbx',
+    source: 'Home and Buildings/Buildings Pack - Jan 2019/FBX/House1.fbx',
+    name: 'House1', pack: 'Buildings Pack - Jan 2019',
+  },
+  {
+    file: 'models/quaternius/House2.fbx',
+    source: 'Home and Buildings/Buildings Pack - Jan 2019/FBX/House2.fbx',
+    name: 'House2', pack: 'Buildings Pack - Jan 2019',
+  },
+  {
+    file: 'models/quaternius/Building1_Small.fbx',
+    source: 'Home and Buildings/Buildings Pack - Jan 2019/FBX/Building1_Small.fbx',
+    name: 'Building1_Small', pack: 'Buildings Pack - Jan 2019',
   },
 ];
 
