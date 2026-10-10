@@ -1,32 +1,16 @@
 import type { Layout } from './layout';
 
 /**
- * Deterministic low-frequency terrain. This intentionally avoids noisy mountains:
- * Camp Glowstick should read as a maintained summer camp built across rolling ground.
+ * Camp Glowstick is a structured summer camp, not a terrain demo. Keep the playable
+ * campground on one reliable grade so roads, imported buildings, furniture, props,
+ * player capsules and AI all agree on the same floor. Elevation can return later as
+ * authored meshes around the perimeter; it should never be produced by noisy vertex math.
  */
-export function terrainHeight(x: number, z: number, layout?: Pick<Layout, 'water'>): number {
-  const broad = Math.sin(x * 0.035) * 1.45 + Math.cos(z * 0.03) * 1.15;
-  const cross = Math.sin((x + z) * 0.018) * 0.85 + Math.cos((x - z) * 0.022) * 0.55;
-  let y = broad + cross;
-
-  // Keep the arrival / central camp relatively level while leaving the larger map rolling.
-  const centre = Math.hypot(x, z);
-  const flatten = Math.max(0, Math.min(1, (centre - 22) / 48));
-  y *= 0.35 + flatten * 0.65;
-
-  // Carve a shallow natural lake basin at the east waterfront.
-  if (layout?.water) {
-    const w = layout.water;
-    const nx = (x - w.x) / w.rx, nz = (z - w.z) / w.rz;
-    const d = nx * nx + nz * nz;
-    if (d < 1.35) {
-      const bowl = Math.max(0, 1 - d / 1.35);
-      y -= bowl * 3.4;
-    }
-  }
-  return y;
+export function terrainHeight(_x: number, _z: number, _layout?: Pick<Layout, 'water'>): number {
+  return 0;
 }
 
+/** Deep-water boundary remains explicit even though the surrounding camp is flat. */
 export function isDeepWater(x: number, z: number, layout: Pick<Layout, 'water'>): boolean {
   const w = layout.water;
   if (!w) return false;
