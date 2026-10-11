@@ -1,5 +1,6 @@
 import type { Box } from './colliders';
 import { WORLD_HALF } from './constants';
+import { AStar, type AStarNode } from '../vendor/three-pathfinding/AStar';
 
 export interface NavPoint { x: number; z: number }
 
@@ -24,54 +25,76 @@ export function navLineClear(a: NavPoint, b: NavPoint, colliders: Box[], radius:
   return true;
 }
 
-export function findRoute(start: NavPoint, goal: NavPoint, colliders: Box[], radius: number, cell = 3): NavPoint[] {
-  if (navLineClear(start, goal, colliders, radius)) return [goal];
+interface GridNode extends AStarNode {
+  cx: number;
+  cz: number;
+}
 
-  const toCell = (v: number) => Math.round(v / cell);
-  const sx = toCell(start.x), sz = toCell(start.z), gx = toCell(goal.x), gz = toCell(goal.z);
-  const minC = Math.ceil((-WORLD_HALF + radius) / cell), maxC = Math.floor((WORLD_HALF - radius) / cell);
-  const open: { x: number; z: number; f: number }[] = [{ x: sx, z: sz, f: 0 }];
-  const came = new Map<string, string>();
-  const gScore = new Map<string, number>([[key(sx, sz), 0]]);
-  const closed = new Set<string>();
-  const coords = new Map<string, [number, number]>([[key(sx, sz), [sx, sz]]]);
-  const heuristic = (x: number, z: number) => Math.hypot(gx - x, gz - z);
+function buildGridGraph(colliders: Box[], radius: number, cell: number): { graph: GridNode[]; byCell: Map<string, number>; minC: number; maxC: number } {
+  const minC = Math.ceil((-WORLD_HALF + radius) / cell);
+  const maxC = Math.floor((WORLD_HALF - radius) / cell);
+  const graph: GridNode[] = [];
+  const byCell = new Map<string, number>();
+
+  for (let cz = minC; cz <= maxC; cz++) {
+    for (let cx = minC; cx <= maxC; cx++) {
+      const x = cx * cell, z = cz * cell;
+      if (blocked(x, z, colliders, radius)) continue;
+      const node: GridNode = { cx, cz, centroid: { x, z }, neighbours: [], cost: 1 };
+      byCell.set(key(cx, cz), graph.length);
+      graph.push(node);
+    }
+  }
+
   const dirs = [
     [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
     [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2],
   ] as const;
 
-  let found = '';
-  for (let expanded = 0; open.length && expanded < 6500; expanded++) {
-    let best = 0;
-    for (let i = 1; i < open.length; i++) if (open[i].f < open[best].f) best = i;
-    const cur = open.splice(best, 1)[0], ck = key(cur.x, cur.z);
-    if (closed.has(ck)) continue;
-    closed.add(ck);
-    if (Math.abs(cur.x - gx) <= 1 && Math.abs(cur.z - gz) <= 1) { found = ck; break; }
-
+  for (const node of graph) {
     for (const [ox, oz, cost] of dirs) {
-      const nx = cur.x + ox, nz = cur.z + oz;
-      if (nx < minC || nx > maxC || nz < minC || nz > maxC) continue;
-      const wx = nx * cell, wz = nz * cell;
-      if (blocked(wx, wz, colliders, radius)) continue;
-      if (ox && oz && (blocked((cur.x + ox) * cell, cur.z * cell, colliders, radius) || blocked(cur.x * cell, (cur.z + oz) * cell, colliders, radius))) continue;
-      const nk = key(nx, nz), tentative = (gScore.get(ck) ?? Infinity) + cost;
-      if (tentative >= (gScore.get(nk) ?? Infinity)) continue;
-      came.set(nk, ck); coords.set(nk, [nx, nz]); gScore.set(nk, tentative);
-      open.push({ x: nx, z: nz, f: tentative + heuristic(nx, nz) });
+      const ni = byCell.get(key(node.cx + ox, node.cz + oz));
+      if (ni === undefined) continue;
+      if (ox && oz) {
+        if (byCell.get(key(node.cx + ox, node.cz)) === undefined || byCell.get(key(node.cx, node.cz + oz)) === undefined) continue;
+      }
+      graph[ni].cost = Math.min(graph[ni].cost ?? Infinity, cost);
+      node.neighbours.push(ni);
     }
   }
-  if (!found) return [];
 
-  const cells: [number, number][] = [];
-  let k = found;
-  while (k !== key(sx, sz)) {
-    const p = coords.get(k); if (!p) break;
-    cells.push(p); const prev = came.get(k); if (!prev) break; k = prev;
+  return { graph, byCell, minC, maxC };
+}
+
+function nearestNode(graph: GridNode[], x: number, z: number): GridNode | null {
+  let best: GridNode | null = null;
+  let bestD = Infinity;
+  for (const node of graph) {
+    const d = (node.centroid.x - x) ** 2 + (node.centroid.z - z) ** 2;
+    if (d < bestD) { best = node; bestD = d; }
   }
-  cells.reverse();
-  const raw: NavPoint[] = cells.map(([x, z]) => ({ x: x * cell, z: z * cell }));
+  return best;
+}
+
+/**
+ * Grid navigation now delegates A* search/open-set management to the MIT-licensed
+ * three-pathfinding implementation rather than maintaining a local hand-rolled A*.
+ * The camp-specific layer only builds the walkability graph from current colliders,
+ * then smooths the library path with line-of-sight checks.
+ */
+export function findRoute(start: NavPoint, goal: NavPoint, colliders: Box[], radius: number, cell = 3): NavPoint[] {
+  if (navLineClear(start, goal, colliders, radius)) return [goal];
+
+  const { graph } = buildGridGraph(colliders, radius, cell);
+  if (!graph.length) return [];
+  const startNode = nearestNode(graph, start.x, start.z);
+  const goalNode = nearestNode(graph, goal.x, goal.z);
+  if (!startNode || !goalNode) return [];
+
+  const pathNodes = AStar.search(graph, startNode, goalNode) as GridNode[];
+  if (!pathNodes.length && startNode !== goalNode) return [];
+
+  const raw: NavPoint[] = pathNodes.map((node) => ({ x: node.centroid.x, z: node.centroid.z }));
   raw.push(goal);
 
   const out: NavPoint[] = [];
@@ -81,12 +104,14 @@ export function findRoute(start: NavPoint, goal: NavPoint, colliders: Box[], rad
     for (let j = raw.length - 1; j >= i; j--) {
       if (navLineClear(anchor, raw[j], colliders, radius)) { far = j; break; }
     }
-    out.push(raw[far]); anchor = raw[far]; i = far + 1;
+    out.push(raw[far]);
+    anchor = raw[far];
+    i = far + 1;
   }
   return out;
 }
 
-/** Backward-compatible numeric wrapper used by older tests/tools. */
+/** Backward-compatible numeric wrapper used by tests/tools. */
 export function findPath(sx: number, sz: number, gx: number, gz: number, colliders: Box[], radius: number, cell = 3): NavPoint[] {
   return findRoute({ x: sx, z: sz }, { x: gx, z: gz }, colliders, radius, cell);
 }
