@@ -2,12 +2,14 @@ import type { Noise, NoiseBus } from './noise';
 import { WORLD_HALF } from './constants';
 import { resolveCapsule, type Box } from './colliders';
 import { findRoute, navLineClear, type NavPoint } from './navigation';
+import { YukaState, YukaStateMachine } from '../vendor/yukaFSM';
 
-export type MonsterMode = 'idle' | 'wander' | 'investigate' | 'stalk' | 'search' | 'chase';
+export type MonsterMode = 'idle' | 'wander' | 'listen' | 'investigate' | 'stalk' | 'reacquire' | 'search' | 'chase' | 'attack';
 export interface MonsterState {
   x: number; z: number; yaw: number; mode: MonsterMode; tx: number; tz: number; timer: number; lastNoise: Noise | null;
   route: NavPoint[]; routeIndex: number; repath: number; routeTargetX: number; routeTargetZ: number;
   lastSeenX: number; lastSeenZ: number; memory: number; exposed: number;
+  fsm: YukaStateMachine<MonsterState>;
 }
 export interface Prey { id: number; x: number; z: number; crouch: boolean; alive: boolean }
 
@@ -22,11 +24,30 @@ export const MONSTER = {
   radius: 0.48,
   height: 2.4,
 };
-export const newMonster = (x: number, z: number): MonsterState => ({
-  x, z, yaw: 0, mode: 'idle', tx: x, tz: z, timer: 0, lastNoise: null,
-  route: [], routeIndex: 0, repath: 0, routeTargetX: x, routeTargetZ: z,
-  lastSeenX: x, lastSeenZ: z, memory: 0, exposed: 0,
-});
+
+class ModeState extends YukaState<MonsterState> {
+  constructor(private readonly mode: MonsterMode) { super(); }
+  enter(owner: MonsterState): void { owner.mode = this.mode; }
+}
+
+const MODES: MonsterMode[] = ['idle', 'wander', 'listen', 'investigate', 'stalk', 'reacquire', 'search', 'chase', 'attack'];
+
+export const newMonster = (x: number, z: number): MonsterState => {
+  const m = {
+    x, z, yaw: 0, mode: 'idle' as MonsterMode, tx: x, tz: z, timer: 0, lastNoise: null,
+    route: [], routeIndex: 0, repath: 0, routeTargetX: x, routeTargetZ: z,
+    lastSeenX: x, lastSeenZ: z, memory: 0, exposed: 0,
+    fsm: null as unknown as YukaStateMachine<MonsterState>,
+  };
+  m.fsm = new YukaStateMachine(m);
+  for (const mode of MODES) m.fsm.add(mode, new ModeState(mode));
+  m.fsm.changeTo('idle');
+  return m;
+};
+
+function mode(m: MonsterState, next: MonsterMode): void {
+  if (!m.fsm.in(next)) m.fsm.changeTo(next);
+}
 
 function segmentHitsBox(x0: number, z0: number, x1: number, z1: number, b: Box): boolean {
   const dx = x1 - x0, dz = z1 - z0;
@@ -75,7 +96,9 @@ function moveTo(m: MonsterState, tx: number, tz: number, speed: number, dt: numb
   const targetChanged = Math.hypot(tx - m.routeTargetX, tz - m.routeTargetZ) > 2.5;
   if (!m.route.length || m.routeIndex >= m.route.length || m.repath <= 0 || targetChanged) {
     m.route = findRoute({ x: m.x, z: m.z }, { x: tx, z: tz }, colliders, MONSTER.radius, 3);
-    m.routeIndex = 0; m.repath = m.mode === 'chase' ? .45 : m.mode === 'stalk' ? 1.0 : 1.6; m.routeTargetX = tx; m.routeTargetZ = tz;
+    m.routeIndex = 0;
+    m.repath = m.mode === 'chase' || m.mode === 'reacquire' ? .45 : m.mode === 'stalk' ? 1.0 : 1.6;
+    m.routeTargetX = tx; m.routeTargetZ = tz;
   }
 
   const wp = m.route[m.routeIndex];
@@ -91,12 +114,9 @@ function setTarget(m: MonsterState, x: number, z: number): void {
 }
 
 /**
- * Extraction-horror hunter loop:
- * - dormant until night;
- * - loud impacts and gunshots pull it across the map;
- * - seeing a player starts a stalk/chase escalation instead of instant homing;
- * - losing sight leaves a remembered last-seen position, followed by a local search;
- * - rescuing campers makes the creature progressively more aggressive.
+ * Perception-driven extraction-horror hunter using the imported YUKA FSM transition model.
+ * It does not know player coordinates unless line-of-sight is clear. Otherwise it reacts to world-noise
+ * positions, last-seen memory and local search targets.
  */
 export function stepMonster(
   m: MonsterState,
@@ -110,7 +130,7 @@ export function stepMonster(
   rescuedCampers = 0,
 ): number | null {
   if (!active) {
-    m.mode = 'idle'; m.timer = 0; m.memory = 0; m.exposed = 0; invalidateRoute(m); return null;
+    mode(m, 'idle'); m.timer = 0; m.memory = 0; m.exposed = 0; invalidateRoute(m); m.fsm.update(); return null;
   }
 
   const aggression = Math.min(1, rescuedCampers / 7);
@@ -126,7 +146,9 @@ export function stepMonster(
   }
 
   const visible = !!nearest && nd < (nearest.crouch ? crouchSight : sight) && hasLineOfSight(m, nearest, colliders);
-  if (nearest && nd < MONSTER.catchDist && visible) return nearest.id;
+  if (nearest && nd < MONSTER.catchDist && visible) {
+    mode(m, 'attack'); m.fsm.update(); return nearest.id;
+  }
 
   if (nearest && visible) {
     m.lastSeenX = nearest.x; m.lastSeenZ = nearest.z;
@@ -135,13 +157,14 @@ export function stepMonster(
     const shouldChase = nd < 8.5 || m.exposed > 1.1 || m.mode === 'chase' || aggression > .72;
     if (shouldChase) {
       if (m.mode !== 'chase') invalidateRoute(m);
-      m.mode = 'chase'; setTarget(m, nearest.x, nearest.z); m.timer = 3.8;
+      mode(m, 'chase'); setTarget(m, nearest.x, nearest.z); m.timer = 3.8;
       moveTo(m, nearest.x, nearest.z, chaseSpeed, dt, colliders);
     } else {
       if (m.mode !== 'stalk') invalidateRoute(m);
-      m.mode = 'stalk'; setTarget(m, nearest.x, nearest.z); m.timer = 2.2;
+      mode(m, 'stalk'); setTarget(m, nearest.x, nearest.z); m.timer = 2.2;
       moveTo(m, nearest.x, nearest.z, MONSTER.stalkSpeed + aggression * .55, dt, colliders);
     }
+    m.fsm.update();
     return null;
   }
 
@@ -149,32 +172,41 @@ export function stepMonster(
   if (m.memory > 0) {
     m.memory -= dt;
     if (m.mode === 'chase' || m.mode === 'stalk') {
-      m.mode = 'search'; m.timer = Math.max(m.timer, 5.0); setTarget(m, m.lastSeenX, m.lastSeenZ);
+      // Reacquire is a brief committed rush to the exact last-visible point, not omniscient pursuit.
+      mode(m, 'reacquire'); m.timer = 1.35; setTarget(m, m.lastSeenX, m.lastSeenZ);
     }
   }
 
-  // A gunshot is the loudest possible lure. It overrides ordinary investigation/search behavior.
   const gunshot = bus.loudest(now, m.x, m.z, (n) => n.source === 'gunshot');
   if (gunshot && gunshot.noise !== m.lastNoise) {
     m.lastNoise = gunshot.noise; setTarget(m, gunshot.noise.x, gunshot.noise.z);
-    m.mode = 'investigate'; m.timer = 7.5;
+    mode(m, 'investigate'); m.timer = 7.5;
   } else {
     const thrown = bus.loudest(now, m.x, m.z, (n) => n.source === 'thrown-impact');
     if (thrown && thrown.noise !== m.lastNoise) {
       m.lastNoise = thrown.noise; setTarget(m, thrown.noise.x, thrown.noise.z);
-      m.mode = 'investigate'; m.timer = 5.5;
+      mode(m, 'investigate'); m.timer = 5.5;
     } else {
       const heard = bus.loudest(now, m.x, m.z);
-      if (heard && heard.noise !== m.lastNoise && (m.mode !== 'investigate' || heard.noise.vol > (m.lastNoise?.vol ?? 0) * 0.8)) {
-        m.lastNoise = heard.noise; setTarget(m, heard.noise.x, heard.noise.z); m.mode = 'investigate'; m.timer = 4.5;
+      if (heard && heard.noise !== m.lastNoise && !['chase', 'stalk', 'reacquire'].includes(m.mode)) {
+        m.lastNoise = heard.noise; setTarget(m, heard.noise.x, heard.noise.z);
+        mode(m, 'listen'); m.timer = .65;
       }
     }
   }
 
-  if (m.mode === 'investigate') {
+  if (m.mode === 'listen') {
+    m.timer -= dt;
+    m.yaw = Math.atan2(m.tx - m.x, m.tz - m.z);
+    if (m.timer <= 0) { mode(m, 'investigate'); m.timer = 4.5; }
+  } else if (m.mode === 'reacquire') {
+    m.timer -= dt;
+    const arrived = moveTo(m, m.lastSeenX, m.lastSeenZ, chaseSpeed * .92, dt, colliders) < .9;
+    if (arrived || m.timer <= 0) { mode(m, 'search'); m.timer = 5.5 + aggression * 2.5; setTarget(m, m.lastSeenX, m.lastSeenZ); invalidateRoute(m); }
+  } else if (m.mode === 'investigate') {
     m.timer -= dt;
     if (moveTo(m, m.tx, m.tz, MONSTER.investigateSpeed + aggression * .65, dt, colliders) < 1 || m.timer <= 0) {
-      m.mode = 'search'; m.timer = 5.5 + aggression * 2.5; invalidateRoute(m);
+      mode(m, 'search'); m.timer = 5.5 + aggression * 2.5; invalidateRoute(m);
     }
   } else if (m.mode === 'search') {
     m.timer -= dt;
@@ -182,14 +214,16 @@ export function stepMonster(
       const a = rng() * Math.PI * 2, r = 2.5 + rng() * (6 + aggression * 4);
       setTarget(m, m.x + Math.cos(a) * r, m.z + Math.sin(a) * r);
     }
-    if (m.timer <= 0) { m.mode = 'wander'; invalidateRoute(m); }
+    if (m.timer <= 0) { mode(m, 'wander'); invalidateRoute(m); }
     else moveTo(m, m.tx, m.tz, (MONSTER.investigateSpeed + aggression * .45) * 0.88, dt, colliders);
-  } else {
+  } else if (m.mode !== 'chase' && m.mode !== 'stalk' && m.mode !== 'attack') {
     if (m.mode === 'idle' || Math.hypot(m.tx - m.x, m.tz - m.z) < 1) {
-      m.mode = 'wander';
+      mode(m, 'wander');
       setTarget(m, (rng() * 2 - 1) * (WORLD_HALF - 8), (rng() * 2 - 1) * (WORLD_HALF - 8));
     }
     moveTo(m, m.tx, m.tz, MONSTER.wanderSpeed + aggression * .35, dt, colliders);
   }
+
+  m.fsm.update();
   return null;
 }
