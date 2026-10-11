@@ -14,7 +14,7 @@ const server = await preview({ logLevel: 'warn', base: '/', build: { outDir }, p
 const exe = [process.env.PW_CHROMIUM, chromium.executablePath(), '/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'].find((p) => p && existsSync(p));
 const browser = await chromium.launch({ executablePath: exe, headless: true, args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 const ctx = await browser.newContext({
-  viewport: { width: 1024, height: 768 }, deviceScaleFactor: 1,
+  viewport: { width: 1024, height: 768 }, deviceScaleFactor: 2,
   hasTouch: true, isMobile: true,
   userAgent: 'Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',
 });
@@ -35,6 +35,12 @@ try {
   const arrive = p.locator('#btn-arrive');
   if (await arrive.count()) await arrive.evaluate((el) => el.click());
   await waitGame();
+
+  // A high-DPR iPad must not render the game at native 2x/3x resolution. That was one of the main
+  // causes of slow-motion input/rendering on real tablets. The runtime governor should start <= 1x.
+  const runtime = await p.evaluate(() => window.__cg.runtime());
+  if (!runtime.touchLike) throw new Error(`iPad runtime profile not detected: ${JSON.stringify(runtime)}`);
+  if (runtime.pixelRatio > 1.05) throw new Error(`iPad render scale too high: ${JSON.stringify(runtime)}`);
 
   const controls = p.locator('.touch-controls');
   if (!(await controls.isVisible())) throw new Error('touch controls are not visible for iPad-style context');
@@ -81,7 +87,7 @@ try {
   await p.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 6000 });
 
   if (errors.length) throw new Error(errors.slice(0, 5).join(' | '));
-  console.log('PASS  iPad-style touch: controls visible, jump, joystick drag movement and USE interaction');
+  console.log('PASS  iPad-style touch: <=1x render scale, controls visible, jump, joystick movement and USE interaction');
 } finally {
   await ctx.close().catch(() => undefined);
   await browser.close().catch(() => undefined);
