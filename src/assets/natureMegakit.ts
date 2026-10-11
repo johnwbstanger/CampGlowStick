@@ -12,7 +12,8 @@ export interface NatureCatalogEntry {
   collider: string;
 }
 interface NatureCatalog { entries: NatureCatalogEntry[] }
-interface LoadedNature { entry: NatureCatalogEntry; root: THREE.Object3D; size: THREE.Vector3 }
+export interface LoadedNature { entry: NatureCatalogEntry; root: THREE.Object3D; size: THREE.Vector3 }
+export interface NatureMeshPart { mesh: THREE.Mesh; matrix: THREE.Matrix4 }
 
 const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
 const loaded = new Map<string, LoadedNature>();
@@ -24,8 +25,6 @@ function standardise(root: THREE.Object3D): { root: THREE.Object3D; size: THREE.
   root.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root);
   const size = box.getSize(new THREE.Vector3());
-  // Quaternius packs are usually authored consistently, but normalize absurd source scales so one
-  // bad file cannot create a 100m sapling. Preserve relative scale within normal metre-sized art.
   const largest = Math.max(size.x, size.y, size.z, 0.001);
   const scale = largest > 40 ? 10 / largest : largest < 0.08 ? 1 / largest : 1;
   const wrap = new THREE.Group();
@@ -57,7 +56,7 @@ function standardise(root: THREE.Object3D): { root: THREE.Object3D; size: THREE.
 
 /**
  * Loads a curated cross-section of the imported CC0 MegaKit. The importer catalogs the complete
- * free pack; runtime deliberately samples variants so initial web downloads stay bounded.
+ * free pack; runtime samples variants so initial browser downloads stay bounded.
  */
 export async function preloadNatureMegakit(): Promise<void> {
   if (ready) return;
@@ -92,6 +91,18 @@ export async function preloadNatureMegakit(): Promise<void> {
 
 export function natureVariants(category: NatureCategory): LoadedNature[] {
   return [...loaded.values()].filter((m) => m.entry.category === category);
+}
+
+export function natureMeshParts(model: LoadedNature): NatureMeshPart[] {
+  model.root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(model.root.matrixWorld).invert();
+  const parts: NatureMeshPart[] = [];
+  model.root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    parts.push({ mesh, matrix: new THREE.Matrix4().multiplyMatrices(inv, mesh.matrixWorld) });
+  });
+  return parts;
 }
 
 export function natureClone(model: LoadedNature): THREE.Object3D { return clone(model.root); }
