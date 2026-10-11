@@ -58,6 +58,9 @@ async function startGame(h, guests) {
     await p.waitForSelector('#arrival-briefing', { timeout: 10000 });
     const text = await p.innerText('#arrival-briefing');
     assert(text.includes('GARY') && text.includes('scratching') && text.includes('gun'), `${p.label} missing Gary briefing content`);
+    // Gary is deliberately click-to-continue; there is no narrative timeout anymore.
+    await sleep(250);
+    assert(await p.locator('#arrival-briefing').count() === 1, `${p.label} Gary briefing auto-dismissed`);
     await p.locator('#btn-arrive').evaluate((el) => el.click());
   }
   await Promise.all([h, ...guests].map((p) => p.waitForFunction(() => window.__cg?.ready && window.__cg.frames() > 5, null, { timeout: 90000 })));
@@ -125,6 +128,17 @@ try {
     assert(s.distinct > 15 && s.lit > 150, `blank-looking world ${JSON.stringify(s)}`);
   });
 
+  await check('landmark door opens, stops blocking, and synchronizes', async () => {
+    const door = (await cg(H, () => window.__cg.doors())).find((d) => d.id === 'door:director') ?? (await cg(H, () => window.__cg.doors()))[0];
+    assert(door && door.open === false, 'expected a closed landmark door');
+    await H.evaluate(([x, z]) => window.__cg.teleport(x, z - .8), [door.x, door.z]);
+    await H.evaluate((id) => window.__cg.act('door', undefined, id), door.id);
+    await H.waitForFunction((id) => window.__cg.doors().some((d) => d.id === id && d.open), door.id, { timeout: 5000 });
+    await g1.waitForFunction((id) => window.__cg.doors().some((d) => d.id === id && d.open), door.id, { timeout: 8000 });
+    await H.evaluate((id) => window.__cg.act('door', undefined, id), door.id);
+    await H.waitForFunction((id) => window.__cg.doors().some((d) => d.id === id && !d.open), door.id, { timeout: 5000 });
+  });
+
   await check('camper interaction state reaches every client', async () => {
     const camper = (await cg(H, () => window.__cg.campers()))[0]; assert(camper, 'camper exists');
     await H.evaluate(([x, z]) => { window.__cg.teleport(x, z + .55); window.__cg.look(Math.PI); }, [camper.x, camper.z]);
@@ -141,22 +155,37 @@ try {
     }
   });
 
-  await check('found camper stays in escort range and boards the bus', async () => {
+  await check('found camper physically catches up and boards without teleport leash', async () => {
     const camper = (await cg(H, () => window.__cg.campers()))[0];
     const before = { x: camper.x, z: camper.z };
     await H.evaluate(([x, z]) => window.__cg.teleport(x + 4, z + 2), [before.x, before.z]);
     await sleep(1800);
     let moved = (await cg(H, () => window.__cg.campers()))[0];
     assert(Math.hypot(moved.x - before.x, moved.z - before.z) > 1, 'camper did not follow rescuer');
-    let local = await cg(H, () => window.__cg.local());
-    assert(Math.hypot(moved.x - local.x, moved.z - local.z) <= 5.7, 'camper escaped the escort leash');
-    await H.evaluate(([x, z]) => window.__cg.teleport(x + 18, z + 8), [local.x, local.z]);
-    await sleep(700);
+
+    const localBeforeJump = await cg(H, () => window.__cg.local());
+    await H.evaluate(([x, z]) => window.__cg.teleport(x + 18, z + 8), [localBeforeJump.x, localBeforeJump.z]);
+    await sleep(250);
     moved = (await cg(H, () => window.__cg.campers()))[0];
+    let local = await cg(H, () => window.__cg.local());
+    const earlyDistance = Math.hypot(moved.x - local.x, moved.z - local.z);
+    assert(earlyDistance > 6, `camper appears to have teleported through the old hard leash (${earlyDistance.toFixed(2)}m)`);
+    await H.waitForFunction((id) => {
+      const c = window.__cg.campers().find((x) => x.id === id); const p = window.__cg.local();
+      return c && Math.hypot(c.x - p.x, c.z - p.z) < 4.5;
+    }, camper.id, { timeout: 7000 });
+
+    // Walk the counselor toward extraction in moderate hops so this remains a follower/boarding test,
+    // not an artificial across-the-map teleport race.
     local = await cg(H, () => window.__cg.local());
-    assert(Math.hypot(moved.x - local.x, moved.z - local.z) <= 5.7, 'camper did not regroup after a large correction');
+    for (let i = 1; i <= 7; i++) {
+      const t = i / 7;
+      const x = local.x + (28 - local.x) * t, z = local.z + (2 - local.z) * t;
+      await H.evaluate(([x, z]) => window.__cg.teleport(x, z), [x, z]);
+      await sleep(450);
+    }
     await H.evaluate(() => window.__cg.teleport(28, 2));
-    await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.rescued), camper.id, { timeout: 18000 });
+    await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.rescued), camper.id, { timeout: 12000 });
     moved = (await cg(H, () => window.__cg.campers()))[0];
     assert(moved.rescued, 'camper never boarded bus');
   });
@@ -196,17 +225,19 @@ try {
   });
 
   await check('successful rescue produces camper-safe bus departure outro', async () => {
+    // Gather every camper first, then make one escorted return to the bus. This matches the new
+    // Snallygaster-style followers better than teleporting each child across the entire map.
     for (let n = 0; n < 7; n++) {
       const campers = await cg(H, () => window.__cg.campers());
       const camper = campers.find((c) => !c.rescued && c.foundBy < 0);
       if (!camper) break;
       await H.evaluate(([x, z]) => { window.__cg.teleport(x, z + .55); window.__cg.look(Math.PI); }, [camper.x, camper.z]);
-      await sleep(180);
+      await sleep(220);
       await H.evaluate(() => window.__cg.act('pick'));
-      await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 5000 });
-      await H.evaluate(() => window.__cg.teleport(28, 2));
-      await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.rescued), camper.id, { timeout: 8000 });
+      await H.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 6000 });
     }
+    await H.evaluate(() => window.__cg.teleport(28, 2));
+    await H.waitForFunction(() => window.__cg.campers().every((c) => c.rescued), null, { timeout: 40000 });
     await H.waitForFunction(() => window.__cg.snap()?.over === 'win', null, { timeout: 8000 });
     await H.waitForSelector('#hud-result .outro-bus', { timeout: 5000 });
     assert((await H.innerText('#hud-result')).includes('HEADCOUNT 7 / 7'), 'outro missing seven-camper headcount');
