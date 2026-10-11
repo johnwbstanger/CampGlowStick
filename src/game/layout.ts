@@ -1,7 +1,7 @@
 import type { AssetName } from '../assets/manifest';
+import { PoissonDiskSampling2D } from '../vendor/poissonDiskSampling';
 import { pickGraffiti } from './graffiti';
 import { WORLD_HALF } from './constants';
-import { poisson2d } from '../vendor/poisson2d';
 
 export interface Placed { name: AssetName; x: number; z: number; rot: number; solid: boolean }
 export interface Decal { host: number; side: number; text: string; creepy: boolean }
@@ -19,6 +19,9 @@ export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
+
+const samplePoisson = (width: number, height: number, minDistance: number, maxDistance: number, tries: number, rng: () => number): [number, number][] =>
+  new PoissonDiskSampling2D({ shape: [width, height], minDistance, maxDistance, tries }, rng).fill();
 
 const CABINS: [number, number][] = [
   [-82, -46], [-64, -56], [-43, -61], [-20, -57],
@@ -69,7 +72,6 @@ export function buildLayout(seed: number, need = 3): Layout {
     [-17, 54, 0.4], [-5, 61, -0.3], [8, 56, 0.7], [15, 67, -0.8],
     [-96, 72, 0.2], [-86, 78, -0.5], [-74, 70, 0.9],
     [91, 57, -0.2], [101, 63, 0.5], [110, 55, -0.7],
-    [-11, -24, 0.1], [7, -24, -0.25], [18, -31, 0.5],
   ];
   tents.forEach(([x, z, r]) => add('tent', x, z, r));
   add('canoe', 84, -4, 0.2); add('canoe', 87, 0, 0.1); add('canoe', 89, 4, 0.35);
@@ -83,7 +85,7 @@ export function buildLayout(seed: number, need = 3): Layout {
     [-44, -64, 0.1], [51, -60, -0.2], [-8, 55, 0.3], [79, -12, -0.4],
   ];
   signs.forEach(([x, z, r]) => add('sign', x, z, r));
-  CABINS.slice(0, 10).forEach(([x, z], i) => add('bunk', x + (i % 2 ? 3 : -3), z + (i % 3 ? 2.5 : -2.5), rng() * Math.PI * 2));
+  // Bunks are no longer placed from cabin-center world offsets. They belong to interior room sockets.
 
   const keepOut = statics.map((s) => [s.x, s.z] as const);
   const nearRoad = (x: number, z: number): boolean => roads.some((road) => road.points.slice(1).some(([bx, bz], i) => {
@@ -92,13 +94,10 @@ export function buildLayout(seed: number, need = 3): Layout {
   const inClearing = (x: number, z: number): boolean => clearings.some((c) => ((x - c.x) / c.rx) ** 2 + ((z - c.z) / c.rz) ** 2 < 1);
   const inLake = (x: number, z: number): boolean => ((x - water.x) / (water.rx + 5)) ** 2 + ((z - water.z) / (water.rz + 5)) ** 2 < 1;
 
-  // Human-authored exclusions + MIT poisson-disk-sampling derivative: vegetation now has blue-noise
-  // spacing instead of 6500 rejection attempts. This is deterministic for multiplayer and gives the
-  // woods natural gaps while keeping roads, buildings, the lake and arrival zone readable.
   const trees: Placed[] = [];
   const kinds: AssetName[] = ['tree', 'tree2', 'tree3'];
   const extent = (WORLD_HALF - 4) * 2;
-  const forest = poisson2d({ width: extent, height: extent, minDistance: 4.0, maxDistance: 7.2, tries: 28, rng });
+  const forest = samplePoisson(extent, extent, 4.0, 7.2, 28, rng);
   for (const [px, pz] of forest) {
     if (trees.length >= 500) break;
     const x = px - extent / 2, z = pz - extent / 2;
@@ -117,21 +116,24 @@ export function buildLayout(seed: number, need = 3): Layout {
   for (let i = 0; i < Math.max(need + 6, 9); i++) items.push({ model: lootModels[i % lootModels.length], kind: 'loot', x: lootSpots[i % lootSpots.length][0], z: lootSpots[i % lootSpots.length][1] });
 
   const zone = (cx: number, cz: number, rx: number, rz: number, pool: AssetName[], count: number, minDistance = 1.4) => {
-    const pts = poisson2d({ width: rx * 2, height: rz * 2, minDistance, maxDistance: minDistance * 1.8, tries: 24, rng });
+    const pts = samplePoisson(rx * 2, rz * 2, minDistance, minDistance * 1.8, 24, rng);
     let used = 0;
     for (const [px, pz] of pts) {
       const nx = (px - rx) / rx, nz = (pz - rz) / rz;
       if (nx * nx + nz * nz > 1) continue;
       const x = cx + px - rx, z = cz + pz - rz;
-      if (!inLake(x, z)) items.push({ model: pool[Math.floor(rng() * pool.length)], kind: 'prop', x, z });
+      if (inLake(x, z)) continue;
+      // Do not scatter general outdoor clutter through buildings, tents, the bus or other static anchors.
+      if (keepOut.some(([kx, kz]) => Math.hypot(kx - x, kz - z) < 3.8)) continue;
+      items.push({ model: pool[Math.floor(rng() * pool.length)], kind: 'prop', x, z });
       if (++used >= count) break;
     }
   };
 
-  const campPool: AssetName[] = ['mug', 'bottle', 'can', 'bucket', 'lantern', 'radio', 'backpack', 'cooler', 'crate', 'sock'];
-  const workPool: AssetName[] = ['crate', 'bucket', 'barrel', 'axe', 'bottle', 'can', 'paddle'];
+  // Outdoor pools only. Socks, bunks and sinks now require interior semantic sockets instead of world scatter.
+  const campPool: AssetName[] = ['mug', 'bottle', 'can', 'lantern', 'radio', 'backpack', 'cooler', 'crate'];
+  const workPool: AssetName[] = ['crate', 'bucket', 'barrel', 'axe', 'bottle', 'can'];
   const waterfrontPool: AssetName[] = ['paddle', 'bucket', 'bottle', 'crate', 'cooler', 'backpack', 'radio'];
-  CABINS.forEach(([x, z], i) => zone(x + (i % 2 ? 2 : -2), z + (i % 3 ? 1 : -1), 5.2, 3.8, campPool, 4, 1.5));
   zone(0, 6, 13, 9, campPool, 12, 1.7); zone(-101, -42, 10, 7, workPool, 10, 1.65);
   zone(97, -29, 10, 7, workPool, 10, 1.65); zone(79, -3, 8, 10, waterfrontPool, 10, 1.55);
   zone(-7, 58, 13, 9, campPool, 8, 1.7); zone(-86, 74, 12, 8, campPool, 8, 1.7);
