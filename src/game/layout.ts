@@ -23,6 +23,8 @@ export function mulberry32(seed: number): () => number {
 const samplePoisson = (width: number, height: number, minDistance: number, maxDistance: number, tries: number, rng: () => number): [number, number][] =>
   new PoissonDiskSampling2D({ shape: [width, height], minDistance, maxDistance, tries }, rng).fill();
 
+// Blueprint-grounded sleeping clusters: cabins flank loop roads and face the shared camp core rather
+// than being independently scattered. The visual asset is a one-storey CC0 log cabin.
 const CABINS: [number, number][] = [
   [-82, -46], [-64, -56], [-43, -61], [-20, -57],
   [21, -59], [45, -56], [68, -44],
@@ -30,6 +32,10 @@ const CABINS: [number, number][] = [
   [18, 36], [43, 31], [67, 22], [86, 8],
 ];
 const faceCentre = (x: number, z: number): number => Math.atan2(-x, -z);
+const localToWorld = (cx: number, cz: number, rot: number, lx: number, lz: number): [number, number] => {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  return [cx + lx * c + lz * s, cz - lx * s + lz * c];
+};
 const distToSegment = (px: number, pz: number, ax: number, az: number, bx: number, bz: number): number => {
   const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz;
   if (!l2) return Math.hypot(px - ax, pz - az);
@@ -37,7 +43,7 @@ const distToSegment = (px: number, pz: number, ax: number, az: number, bx: numbe
   return Math.hypot(px - (ax + t * dx), pz - (az + t * dz));
 };
 
-/** Large deterministic campground plan. Roads/clearings act as the map overlay and everything else is layered onto it. */
+/** Deterministic campground master plan. Infrastructure is placed before props and vegetation. */
 export function buildLayout(seed: number, need = 3): Layout {
   const rng = mulberry32(seed);
   const water: WaterArea = { x: 103, z: -4, rx: 23, rz: 18, y: -1.15 };
@@ -51,7 +57,7 @@ export function buildLayout(seed: number, need = 3): Layout {
     { width: 4.8, points: [[-45, -64], [-43, -61], [-20, -57]] },
     { width: 4.8, points: [[18, -71], [21, -59], [45, -56], [68, -44]] },
     { width: 4.2, points: [[0, 6], [-7, 56], [-23, 82], [-48, 94]] },
-    { width: 4.2, points: [[28, 2], [52, -10], [76, -13]] },
+    { width: 4.2, points: [[28, 2], [52, -10], [76, -13], [87, -6]] },
   ];
 
   const clearings: Clearing[] = [
@@ -64,17 +70,45 @@ export function buildLayout(seed: number, need = 3): Layout {
   const statics: Placed[] = [];
   const add = (name: AssetName, x: number, z: number, rot: number, solid = true) => statics.push({ name, x, z, rot, solid });
   add('campfire', 0, 6, 0);
-  CABINS.forEach(([x, z]) => add('cabin', x, z, faceCentre(x, z), false));
-  add('shed', -102, -42, 0.25, false); add('shed', 97, -29, -0.4, false);
-  add('lodge', 15, 18, -0.2, false); add('bus', 31, 2, Math.PI / 2);
 
+  // Building pass first.
+  CABINS.forEach(([x, z]) => add('cabin', x, z, faceCentre(x, z), false));
+  add('shed', -102, -42, 0.25, false);
+  add('shed', 97, -29, -0.4, false);
+  add('lodge', 15, 18, -0.2, false);
+  add('boathouse', 89, -4, Math.PI / 2, false);
+  add('trailShelter', -48, 94, -0.35, false);
+  add('bus', 31, 2, Math.PI / 2);
+
+  // Furniture pass second. These are interior room sockets transformed by each cabin's rotation,
+  // not arbitrary offsets around the exterior. Bunks are therefore spatial children of cabins.
+  CABINS.forEach(([x, z], i) => {
+    const rot = faceCentre(x, z);
+    const bunkSockets: [number, number, number][] = [
+      [-2.35, -1.35, Math.PI / 2], [2.35, -1.35, -Math.PI / 2],
+      [-2.35, 1.10, Math.PI / 2], [2.35, 1.10, -Math.PI / 2],
+    ];
+    for (const [lx, lz, lr] of bunkSockets) {
+      const [bx, bz] = localToWorld(x, z, rot, lx, lz);
+      add('bunk', bx, bz, rot + lr, true);
+    }
+    const [sx, sz] = localToWorld(x, z, rot, 0, -2.45);
+    add('bookshelf', sx, sz, rot, true);
+    if (i % 3 === 0) {
+      const [tx, tz] = localToWorld(x, z, rot, 0, .1);
+      add('table', tx, tz, rot, true);
+    }
+  });
+
+  // Activity compounds are authored groups, not isolated tent scatter. Each cluster keeps a shared
+  // social center and a clear entrance facing the circulation network.
   const tents: [number, number, number][] = [
     [-17, 54, 0.4], [-5, 61, -0.3], [8, 56, 0.7], [15, 67, -0.8],
     [-96, 72, 0.2], [-86, 78, -0.5], [-74, 70, 0.9],
     [91, 57, -0.2], [101, 63, 0.5], [110, 55, -0.7],
   ];
   tents.forEach(([x, z, r]) => add('tent', x, z, r));
-  add('canoe', 84, -4, 0.2); add('canoe', 87, 0, 0.1); add('canoe', 89, 4, 0.35);
+  add('canoe', 84, -4, 0.2); add('canoe', 86, 0, 0.1); add('canoe', 88, 4, 0.35);
   add('logs', 4, 11, 0.8); add('logs', -6, 2, 2.1); add('logs', -1, -2, 1.4);
   add('boulder', -115, -2, 0.2); add('boulder', 115, 47, 0.4); add('boulder', -15, 112, 1.2);
   add('rock', -107, -9, 1.0); add('rock', 92, 77, 2.0); add('rock', 36, 108, 0.7); add('rock', -79, 98, 1.8);
@@ -85,15 +119,16 @@ export function buildLayout(seed: number, need = 3): Layout {
     [-44, -64, 0.1], [51, -60, -0.2], [-8, 55, 0.3], [79, -12, -0.4],
   ];
   signs.forEach(([x, z, r]) => add('sign', x, z, r));
-  // Bunks are no longer placed from cabin-center world offsets. They belong to interior room sockets.
 
-  const keepOut = statics.map((s) => [s.x, s.z] as const);
+  const keepOut = statics.map((s) => [s.x, s.z, s.name] as const);
   const nearRoad = (x: number, z: number): boolean => roads.some((road) => road.points.slice(1).some(([bx, bz], i) => {
     const [ax, az] = road.points[i]; return distToSegment(x, z, ax, az, bx, bz) < road.width * 0.75 + 1.7;
   }));
   const inClearing = (x: number, z: number): boolean => clearings.some((c) => ((x - c.x) / c.rx) ** 2 + ((z - c.z) / c.rz) ** 2 < 1);
   const inLake = (x: number, z: number): boolean => ((x - water.x) / (water.rx + 5)) ** 2 + ((z - water.z) / (water.rz + 5)) ** 2 < 1;
 
+  // Vegetation is last. Upstream MIT Poisson sampling produces deterministic blue-noise forest
+  // spacing, while infrastructure and activity-zone exclusions always win over vegetation.
   const trees: Placed[] = [];
   const kinds: AssetName[] = ['tree', 'tree2', 'tree3'];
   const extent = (WORLD_HALF - 4) * 2;
@@ -101,7 +136,7 @@ export function buildLayout(seed: number, need = 3): Layout {
   for (const [px, pz] of forest) {
     if (trees.length >= 500) break;
     const x = px - extent / 2, z = pz - extent / 2;
-    if (keepOut.some(([kx, kz]) => Math.hypot(kx - x, kz - z) < 6)) continue;
+    if (keepOut.some(([kx, kz, name]) => Math.hypot(kx - x, kz - z) < (name === 'cabin' ? 7 : name === 'tent' ? 4.2 : 3.8))) continue;
     if (nearRoad(x, z) || inClearing(x, z) || inLake(x, z)) continue;
     if (Math.hypot(x - 31, z - 2) < 13) continue;
     trees.push({ name: kinds[Math.floor(rng() * kinds.length)], x, z, rot: rng() * Math.PI * 2, solid: true });
@@ -112,7 +147,9 @@ export function buildLayout(seed: number, need = 3): Layout {
 
   const items: ItemSpawn[] = [];
   const lootModels: AssetName[] = ['lantern', 'radio', 'backpack', 'cooler', 'lantern', 'radio', 'backpack', 'cooler'];
-  const lootSpots: [number, number][] = CABINS.map(([x, z], i) => [x + (i % 2 ? 2.5 : -2.5), z + (i % 3 ? 2 : -2)]);
+  const lootSpots: [number, number][] = CABINS.map(([x, z], i) => {
+    const rot = faceCentre(x, z); return localToWorld(x, z, rot, i % 2 ? 1.1 : -1.1, 2.75);
+  });
   for (let i = 0; i < Math.max(need + 6, 9); i++) items.push({ model: lootModels[i % lootModels.length], kind: 'loot', x: lootSpots[i % lootSpots.length][0], z: lootSpots[i % lootSpots.length][1] });
 
   const zone = (cx: number, cz: number, rx: number, rz: number, pool: AssetName[], count: number, minDistance = 1.4) => {
@@ -123,14 +160,13 @@ export function buildLayout(seed: number, need = 3): Layout {
       if (nx * nx + nz * nz > 1) continue;
       const x = cx + px - rx, z = cz + pz - rz;
       if (inLake(x, z)) continue;
-      // Do not scatter general outdoor clutter through buildings, tents, the bus or other static anchors.
-      if (keepOut.some(([kx, kz]) => Math.hypot(kx - x, kz - z) < 3.8)) continue;
+      if (keepOut.some(([kx, kz, name]) => Math.hypot(kx - x, kz - z) < (name === 'cabin' ? 5.0 : name === 'tent' ? 3.4 : 2.8))) continue;
       items.push({ model: pool[Math.floor(rng() * pool.length)], kind: 'prop', x, z });
       if (++used >= count) break;
     }
   };
 
-  // Outdoor pools only. Socks, bunks and sinks now require interior semantic sockets instead of world scatter.
+  // Outdoor pools only. Private-bedroom clutter (socks etc.) is excluded from world scatter.
   const campPool: AssetName[] = ['mug', 'bottle', 'can', 'lantern', 'radio', 'backpack', 'cooler', 'crate'];
   const workPool: AssetName[] = ['crate', 'bucket', 'barrel', 'axe', 'bottle', 'can'];
   const waterfrontPool: AssetName[] = ['paddle', 'bucket', 'bottle', 'crate', 'cooler', 'backpack', 'radio'];

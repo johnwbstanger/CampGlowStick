@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { MANIFEST } from '../../src/assets/manifest';
 import { buildLayout } from '../../src/game/layout';
 import { findPath } from '../../src/game/navigation';
+import { chooseCamperHides } from '../../src/game/camperSpawns';
 import { semanticScatter } from '../../src/worldgen/placement';
 
 describe('imported open-source world stack', () => {
@@ -19,9 +21,29 @@ describe('imported open-source world stack', () => {
     expect(a.every(([x, z]) => Math.hypot(x, z) >= 6)).toBe(true);
   });
 
-  it('does not world-scatter bunks or socks in the live map anymore', () => {
+  it('uses the pinned CC0 one-storey camp building family instead of suburban House1/House2', () => {
+    expect(MANIFEST.cabin.file).toContain('openagents/log_cabin.glb');
+    expect(MANIFEST.shed.file).toContain('openagents/woodshed.glb');
+    expect(MANIFEST.boathouse.file).toContain('openagents/boathouse.glb');
+    expect(MANIFEST.trailShelter.file).toContain('openagents/trail_shelter.glb');
+    expect(MANIFEST.groundBrush.file).toContain('nature/ground_grass.glb');
+  });
+
+  it('parents bunks to cabin interiors and keeps private socks out of outdoor world scatter', () => {
     const layout = buildLayout(12345, 3);
-    expect(layout.statics.some((s) => s.name === 'bunk')).toBe(false);
+    const cabins = layout.statics.filter((s) => s.name === 'cabin');
+    const bunks = layout.statics.filter((s) => s.name === 'bunk');
+    expect(cabins.length).toBeGreaterThan(8);
+    expect(bunks.length).toBe(cabins.length * 4);
+    expect(bunks.every((b) => cabins.some((c) => Math.hypot(b.x - c.x, b.z - c.z) < 3.3))).toBe(true);
     expect(layout.items.some((s) => s.model === 'sock')).toBe(false);
+  });
+
+  it('selects a majority of camper hides from real building interiors', () => {
+    const hides = chooseCamperHides(buildLayout(98765, 3), 7);
+    expect(hides).toHaveLength(7);
+    expect(hides.filter((h) => h.kind === 'indoor').length).toBeGreaterThanOrEqual(4);
+    expect(hides.some((h) => h.label.includes('UNDER BUNK'))).toBe(true);
+    expect(hides.every((h) => h.pose === 'stand' || h.pose === 'crouch')).toBe(true);
   });
 });
