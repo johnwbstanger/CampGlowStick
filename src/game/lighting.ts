@@ -28,6 +28,7 @@ export class Lighting {
   night = false;
   private targetT = 0;
   private t = 0;
+  private touchLike = navigator.maxTouchPoints > 0 || /iPad|iPhone|Android/i.test(navigator.userAgent);
   hemi = new THREE.HemisphereLight();
   sun = new THREE.DirectionalLight('#FFD0A0');
   moon = new THREE.DirectionalLight('#7F93C8');
@@ -38,7 +39,8 @@ export class Lighting {
     scene.fog = this.fog;
     this.sun.position.set(-75, 14, -42);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    const shadowSize = this.touchLike ? 1024 : 2048;
+    this.sun.shadow.mapSize.set(shadowSize, shadowSize);
     const sc = this.sun.shadow.camera;
     sc.left = sc.bottom = -145; sc.right = sc.top = 145; sc.near = 1; sc.far = 260;
     this.sun.shadow.bias = -0.0004;
@@ -49,7 +51,7 @@ export class Lighting {
     camera.add(this.flash, this.flash.target);
     scene.add(this.hemi, this.sun, this.moon, camera);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.shadowMap.type = this.touchLike ? THREE.BasicShadowMap : THREE.PCFShadowMap;
     this.apply();
     new RGBELoader().loadAsync(assetUrl(HDRI_FILE)).then((tex) => {
       tex.mapping = THREE.EquirectangularReflectionMapping;
@@ -97,6 +99,7 @@ export class Lighting {
     this.sun.position.y = nlerp(14, 0.8, horizon);
     this.sun.position.x = nlerp(-75, -96, horizon);
     this.sun.color.copy(C('#FFD8AA')).lerp(C('#FF8870'), Math.min(1, this.t * 1.25));
-    this.setShadows(this.t < 0.8);
+    // Mobile Safari pays heavily for full-camp shadow maps. Keep sunset shadows, drop them sooner.
+    this.setShadows(this.t < (this.touchLike ? 0.62 : 0.8));
   }
 }
