@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { resolveCapsule, type Box } from './colliders';
+import type { Box } from './colliders';
 import { PLAYER, WORLD_HALF } from './constants';
 import { damp } from './interp';
+import { moveCapsuleSwept } from './physics';
 import type { PlayerState } from '../net/protocol';
 import type { Layout } from './layout';
 import { isDeepWater, terrainHeight } from './terrain';
@@ -112,13 +113,13 @@ export class LocalPlayer {
       const h = this.crouch ? PLAYER.crouchHeight : PLAYER.height;
       const ox = this.pos.x, oz = this.pos.z;
 
-      this.pos.x += dx;
-      resolveCapsule(this.pos, PLAYER.radius, h, colliders, WORLD_HALF);
-      if (isDeepWater(this.pos.x, this.pos.z, this.layout)) this.pos.x = ox;
-
-      this.pos.z += dz;
-      resolveCapsule(this.pos, PLAYER.radius, h, colliders, WORLD_HALF);
-      if (isDeepWater(this.pos.x, this.pos.z, this.layout)) this.pos.z = oz;
+      // Sub-step long frames so sprinting on iPad/low-FPS devices cannot tunnel
+      // through thin cabin walls, gates, tables, or other authored AABBs.
+      moveCapsuleSwept(this.pos, dx, dz, PLAYER.radius, h, colliders, WORLD_HALF);
+      if (isDeepWater(this.pos.x, this.pos.z, this.layout)) {
+        this.pos.x = ox;
+        this.pos.z = oz;
+      }
     }
 
     const groundY = terrainHeight(this.pos.x, this.pos.z, this.layout);
