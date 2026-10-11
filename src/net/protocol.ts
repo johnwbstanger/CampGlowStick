@@ -14,7 +14,7 @@ export interface PlayerState {
 }
 export interface ItemDef { id: number; model: string; kind: 'prop' | 'loot' | 'glow'; color?: string; mat: string }
 export type ItemSnap = [number, number, number, number, number, number, number, number, number];
-export interface NoiseEvt { x: number; z: number; vol: number; mat: string; t: number }
+export interface NoiseEvt { x: number; z: number; vol: number; mat: string; t: number; source?: string }
 export interface MonsterSnap { p: Vec3; yaw: number; mode: string }
 export interface CamperSnap { id: number; x: number; y: number; z: number; foundBy: number; rescued: boolean }
 export interface DoorSnap { id: string; open: boolean }
