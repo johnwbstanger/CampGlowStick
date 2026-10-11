@@ -10,6 +10,8 @@ const CROUCH_HOLD_MS = 180;
 const JUMP_SPEED = 5.4;
 const GRAVITY = 15.5;
 const KEY_LOOK = 1.75;
+const JUMP_BUFFER_MS = 260;
+const COYOTE_MS = 120;
 
 /** First-person controller with desktop and touch inputs. Sprint is intentionally unlimited. */
 export class LocalPlayer {
@@ -26,6 +28,8 @@ export class LocalPlayer {
   private spaceDownAt = 0;
   private jumpVelocity = 0;
   private grounded = true;
+  private lastGroundedAt = performance.now();
+  private jumpQueuedUntil = 0;
   private touchMoveX = 0;
   private touchMoveY = 0;
   private touchSprint = false;
@@ -74,20 +78,40 @@ export class LocalPlayer {
 
   teleport(x: number, z: number): void {
     this.pos.x = x; this.pos.z = z; this.pos.y = terrainHeight(x, z, this.layout);
-    this.jumpVelocity = 0; this.grounded = true;
+    this.jumpVelocity = 0; this.grounded = true; this.lastGroundedAt = performance.now(); this.jumpQueuedUntil = 0;
   }
   pressed(code: string): boolean { return this.keys.has(code); }
   setTouchMove(x: number, y: number): void { this.touchMoveX = THREE.MathUtils.clamp(x, -1, 1); this.touchMoveY = THREE.MathUtils.clamp(y, -1, 1); }
   setTouchSprint(on: boolean): void { this.touchSprint = on; }
   setTouchCrouch(on: boolean): void { this.touchCrouch = on; }
   toggleFlash(): void { this.flash = !this.flash; }
-  jump(): void { if (this.grounded && this.alive) { this.jumpVelocity = JUMP_SPEED; this.grounded = false; } }
+
+  /** Queue the request briefly so a dropped Safari frame or edge-of-ledge press still feels responsive. */
+  jump(): void {
+    if (!this.alive) return;
+    const now = performance.now();
+    this.jumpQueuedUntil = now + JUMP_BUFFER_MS;
+    this.tryJump(now);
+  }
+
+  private tryJump(now: number): void {
+    if (!this.alive || this.jumpQueuedUntil < now) return;
+    if (!this.grounded && now - this.lastGroundedAt > COYOTE_MS) return;
+    this.jumpVelocity = JUMP_SPEED;
+    this.grounded = false;
+    this.jumpQueuedUntil = 0;
+  }
+
   lookDelta(dx: number, dy: number): void {
     this.yaw -= dx * 0.0022;
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - dy * 0.0022));
   }
 
   update(dt: number, colliders: Box[]): void {
+    const now = performance.now();
+    if (this.grounded) this.lastGroundedAt = now;
+    this.tryJump(now);
+
     const k = this.keys;
     if (k.has('ArrowLeft')) this.yaw += KEY_LOOK * dt;
     if (k.has('ArrowRight')) this.yaw -= KEY_LOOK * dt;
@@ -126,7 +150,11 @@ export class LocalPlayer {
     if (!this.grounded || this.jumpVelocity > 0) {
       this.jumpVelocity -= GRAVITY * dt;
       this.pos.y += this.jumpVelocity * dt;
-      if (this.pos.y <= groundY) { this.pos.y = groundY; this.jumpVelocity = 0; this.grounded = true; }
+      if (this.pos.y <= groundY) {
+        this.pos.y = groundY; this.jumpVelocity = 0; this.grounded = true; this.lastGroundedAt = now;
+        // A jump pressed a fraction before landing should fire immediately on landing.
+        this.tryJump(now);
+      }
     }
 
     this.eye += ((this.crouch ? PLAYER.crouchEye : PLAYER.eye) - this.eye) * damp(12, dt);
