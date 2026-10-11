@@ -4,6 +4,8 @@ import type { CamperSnap, GameSnap, ItemDef, ItemSnap, Msg, PlayerState } from '
 import { resolveCapsule, type Box } from './colliders';
 import { DAY_SECONDS, PLAYER, REACH, WORLD_HALF } from './constants';
 import { followerPlan, steeringVelocity } from './followerSteering';
+import { chooseCamperHides } from './camperSpawns';
+import { advanceBoardingStage, boardingTarget, type BoardingStage } from './busBoarding';
 import { GLOW_MASS, propInfo } from './items';
 import type { Layout } from './layout';
 import { newMonster, stepMonster } from './monster';
@@ -17,17 +19,13 @@ interface SimItem {
   def: ItemDef; body: CANNON.Body; mass: number; holder: number; lastHit: number;
   halfX: number; halfY: number; halfZ: number; thrownAt: number;
 }
-interface SimCamper { id: number; x: number; y: number; z: number; vx: number; vz: number; foundBy: number; rescued: boolean }
+interface SimCamper {
+  id: number; x: number; y: number; z: number; vx: number; vz: number;
+  foundBy: number; rescued: boolean; boardingStage: BoardingStage; seatIndex: number;
+}
 export interface Sizes { get(model: string): { x: number; y: number; z: number } | undefined }
 
 const CAMPER_NEED = 7;
-const CAMPER_HIDES: [number, number][] = [
-  [-78, -43], [-42, -58], [19, -55], [65, -39], [-67, 21], [-20, 32], [42, 28],
-  [82, 7], [-8, 58], [-88, 76], [97, 59], [-101, -39], [78, -7], [-45, 88],
-];
-const BUS_SEATS: [number, number][] = [
-  [-3.0, .62], [-3.0, -.62], [-1.75, .62], [-1.75, -.62], [-.5, .62], [-.5, -.62], [.78, .62],
-];
 const CAMPER_BOARD_SPEED = 4.8;
 const GUN_FIRE_COOLDOWN = 0.38;
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -67,14 +65,11 @@ export class HostSim {
     this.world.defaultContactMaterial.contactEquationStiffness = 1e7;
     this.world.defaultContactMaterial.contactEquationRelaxation = 4;
 
-    // The playable camp is intentionally flat. Let the physics engine own the floor contact instead
-    // of teleporting props upward after every step; this is what makes stacks, tipping and rolling coherent.
     const ground = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
     ground.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
     ground.position.y = 0;
     this.world.addBody(ground);
 
-    // Safety catch is far below gameplay and should never participate during a healthy simulation.
     const catchPlane = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
     catchPlane.quaternion.setFromEuler(-Math.PI / 2, 0, 0); catchPlane.position.y = -20; this.world.addBody(catchPlane);
 
@@ -89,9 +84,17 @@ export class HostSim {
       this.addItem(d, at[0], terrainHeight(at[0], at[1], layout) + Math.max(0.03, sz.y / 2) + 0.03 + extra, at[1]);
       this.nextId = Math.max(this.nextId, d.id + 1);
     }
+
+    // Hiding locations are authored indoor/outdoor anchors and shuffled deterministically from the world seed.
+    // This guarantees several campers begin inside real buildings instead of all seven spawning in open grass.
+    const hides = chooseCamperHides(layout, CAMPER_NEED);
     for (let i = 0; i < CAMPER_NEED; i++) {
-      const [x, z] = CAMPER_HIDES[(i * 2 + (layout.need % 3)) % CAMPER_HIDES.length];
-      this.campers.set(i, { id: i, x, y: terrainHeight(x, z, layout), z, vx: 0, vz: 0, foundBy: -1, rescued: false });
+      const hide = hides[i];
+      const x = hide?.x ?? layout.spawns[0][0], z = hide?.z ?? layout.spawns[0][1];
+      this.campers.set(i, {
+        id: i, x, y: terrainHeight(x, z, layout), z, vx: 0, vz: 0,
+        foundBy: -1, rescued: false, boardingStage: -1, seatIndex: i,
+      });
     }
     net.onHostMessage = (from, msg) => this.handle(from, msg);
     for (const p of net.players) this.addPlayer(p.id, layout.spawns[p.id % layout.spawns.length]);
@@ -183,7 +186,6 @@ export class HostSim {
     const [fx, fy, fz] = viewForward(pl.state.yaw, pl.state.pitch);
     this.noise(ox, oz, VOLUME.crash, 'metal', 'gunshot');
 
-    // Camera-aimed monster ray. The creature is tall, so use a chest-height target point.
     const mdx = this.monster.x - ox, mdy = 1.35 - oy, mdz = this.monster.z - oz;
     const malong = mdx * fx + mdy * fy + mdz * fz;
     const mx = mdx - fx * malong, my = mdy - fy * malong, mz = mdz - fz * malong;
@@ -194,7 +196,6 @@ export class HostSim {
       this.monster.mode = 'search'; this.monster.timer = 2.5;
     }
 
-    // Dynamic props in the shot path get a physical kick instead of ignoring bullets entirely.
     let hit: SimItem | undefined, bestAlong = Infinity;
     for (const it of this.items.values()) {
       if (it === gun || it.holder >= 0) continue;
@@ -222,7 +223,8 @@ export class HostSim {
       if (d < bd && (d < 1.15 || facing > 0.35)) { best = c; bd = d; }
     }
     if (!best) return false;
-    best.foundBy = id; best.vx = best.vz = 0; this.noise(best.x, best.z, 0.8, 'step', 'interaction'); return true;
+    best.foundBy = id; best.vx = best.vz = 0; best.boardingStage = -1;
+    this.noise(best.x, best.z, 0.8, 'step', 'interaction'); return true;
   }
 
   private pickup(id: number, pl: SimPlayer): void {
@@ -267,20 +269,16 @@ export class HostSim {
     return this.layout.statics.find((s) => s.name === 'bus') ?? { x: this.layout.extraction.x, z: this.layout.extraction.z, rot: 0 };
   }
 
-  private seatCamper(c: SimCamper): void {
+  private finishBoarding(c: SimCamper): void {
     if (c.rescued) return;
-    const bus = this.busPlacement();
-    const seat = BUS_SEATS[Math.min(this.rescued, BUS_SEATS.length - 1)];
-    const cos = Math.cos(bus.rot), sin = Math.sin(bus.rot);
-    c.x = bus.x + seat[0] * cos + seat[1] * sin;
-    c.z = bus.z - seat[0] * sin + seat[1] * cos;
-    c.y = terrainHeight(c.x, c.z, this.layout) + 0.18;
-    c.vx = c.vz = 0;
+    const [x, z] = boardingTarget(this.busPlacement(), 2, c.seatIndex);
+    c.x = x; c.z = z; c.y = terrainHeight(c.x, c.z, this.layout) + 0.18;
+    c.vx = c.vz = 0; c.boardingStage = 2;
     c.rescued = true; c.foundBy = -1; this.rescued++;
     this.noise(c.x, c.z, 0.7, 'step', 'interaction');
   }
 
-  /** Smooth compact escort formation: match counselor pace, accelerate to catch up, never form a long conga line. */
+  /** Snallygaster escort formation, then a physical door -> aisle -> seat boarding route. */
   private stepCampers(dt: number): void {
     const nextSlot = new Map<number, number>();
     const counts = new Map<number, number>();
@@ -289,27 +287,42 @@ export class HostSim {
     for (const c of this.campers.values()) {
       if (c.rescued || c.foundBy < 0) continue;
       const pl = this.players.get(c.foundBy);
-      if (!pl || !pl.alive) { c.foundBy = -1; c.vx = c.vz = 0; continue; }
+      if (!pl || !pl.alive) { c.foundBy = -1; c.vx = c.vz = 0; c.boardingStage = -1; continue; }
 
       const px = pl.state.p[0], pz = pl.state.p[2];
-      const slot = nextSlot.get(c.foundBy) ?? 0;
-      nextSlot.set(c.foundBy, slot + 1);
       const camperToPlayer = Math.hypot(px - c.x, pz - c.z);
-      const plan = followerPlan(slot, counts.get(c.foundBy) ?? 1, camperToPlayer, pl.state.sprint, pl.state.moving);
-      const [fx, fz] = this.forward(pl);
-      const heading = Math.atan2(fx, fz);
-      let tx = px + Math.sin(heading + plan.angle) * plan.radius;
-      let tz = pz + Math.cos(heading + plan.angle) * plan.radius;
-      let speed = plan.speed;
+      let tx: number, tz: number, speed: number, stopRadius = .08;
 
-      // Once the counselor and their escorted camper are both near the bus, the camper commits to boarding.
-      if (this.inBusZone(px, pz) && camperToPlayer < 6.5) {
-        const bus = this.busPlacement();
-        tx = bus.x; tz = bus.z; speed = CAMPER_BOARD_SPEED;
+      // Once committed, campers continue through the actual opening even if the counselor moves around inside.
+      if (c.boardingStage >= 0) {
+        [tx, tz] = boardingTarget(this.busPlacement(), c.boardingStage, c.seatIndex);
+        speed = CAMPER_BOARD_SPEED;
+        stopRadius = .34;
+      } else {
+        const slot = nextSlot.get(c.foundBy) ?? 0;
+        nextSlot.set(c.foundBy, slot + 1);
+        const plan = followerPlan(slot, counts.get(c.foundBy) ?? 1, camperToPlayer, pl.state.sprint, pl.state.moving);
+        const [fx, fz] = this.forward(pl);
+        const heading = Math.atan2(fx, fz);
+        tx = px + Math.sin(heading + plan.angle) * plan.radius;
+        tz = pz + Math.cos(heading + plan.angle) * plan.radius;
+        speed = plan.speed;
+        stopRadius = plan.stopRadius;
+        if (this.inBusZone(px, pz) && camperToPlayer < 6.5) {
+          c.boardingStage = 0;
+          [tx, tz] = boardingTarget(this.busPlacement(), 0, c.seatIndex);
+          speed = CAMPER_BOARD_SPEED;
+          stopRadius = .34;
+        }
       }
 
       const dx = tx - c.x, dz = tz - c.z, d = Math.hypot(dx, dz);
-      if (d <= plan.stopRadius && !this.inBusZone(px, pz)) {
+      if (d <= stopRadius) {
+        if (c.boardingStage >= 0) {
+          const next = advanceBoardingStage(c.boardingStage, d);
+          if (c.boardingStage === 2 && next === 2) { this.finishBoarding(c); continue; }
+          c.boardingStage = next;
+        }
         [c.vx, c.vz] = steeringVelocity(0, 0, 0, c.vx, c.vz, dt);
       } else {
         [c.vx, c.vz] = steeringVelocity(dx, dz, speed, c.vx, c.vz, dt);
@@ -321,7 +334,6 @@ export class HostSim {
       if (Math.abs(tryPos.x - beforeX) > 0.03) c.vx *= 0.2;
       if (Math.abs(tryPos.z - beforeZ) > 0.03) c.vz *= 0.2;
       c.x = tryPos.x; c.z = tryPos.z; c.y = terrainHeight(c.x, c.z, this.layout);
-      if (this.inBusZone(c.x, c.z)) this.seatCamper(c);
     }
   }
 
@@ -351,8 +363,6 @@ export class HostSim {
     }
     this.stepCampers(dt);
 
-    // Fixed-step rigid body integration: ground, props and thrown objects resolve through the
-    // engine's contact solver instead of the old per-item Y clamp that made everything look scripted.
     this.world.step(1 / 60, Math.min(dt, 0.05), 4);
     this.bus.prune(this.time);
 
