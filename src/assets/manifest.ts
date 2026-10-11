@@ -5,6 +5,7 @@ const k = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: 
 const q = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/quaternius/${file}.fbx`, format: 'fbx', ...fit });
 const cg = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/quaternius/camp-characters/${file}.gltf`, format: 'glb', ...fit });
 const oa = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/openagents/${file}.glb`, format: 'glb', ...fit });
+const cc0 = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/cc0-camp-props/${file}.glb`, format: 'glb', ...fit });
 const CHARS = 'abcdefgh'.split('');
 
 export const MANIFEST = {
@@ -14,7 +15,6 @@ export const MANIFEST = {
   camperFemale: q('Smooth_Female_Casual', { h: 1.24 }),
   counselorMale: q('Smooth_Male_Shirt', { h: 1.82 }),
   counselorFemale: q('Smooth_Female_Casual', { h: 1.74 }),
-  // Higher-detail CC0 modular variants imported from Quaternius and recolored at runtime into camp uniforms.
   counselorMaleCasual: cg('male_casual2', { h: 1.82 }),
   counselorMaleBeach: cg('male_beach', { h: 1.78 }),
   counselorFemaleCasual: cg('female_casual', { h: 1.72 }),
@@ -35,9 +35,9 @@ export const MANIFEST = {
   bookshelf: k('furniture/bookcaseOpen', { h: 1.9 }),
   sink: k('furniture/bathroomSink', { w: 1.1 }),
   teddy: k('furniture/bear', { h: 0.42 }),
-  cooler: k('survival/box-large', { w: 0.7 }),
+  cooler: cc0('cooler', { w: 0.72 }),
   crate: k('survival/box', { w: 0.55 }),
-  backpack: k('survival/bedroll-packed', { w: 0.6 }),
+  backpack: cc0('backpack', { h: 0.58 }),
   lantern: k('holiday/lantern', { h: 0.5 }),
   tent: k('nature/tent_detailedClosed', { w: 3.2 }),
   tree: k('nature/tree_pineTallA', { h: 7 }),
