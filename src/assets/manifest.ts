@@ -4,6 +4,7 @@ export interface AssetDef { file: string; h?: number; w?: number; format?: 'glb'
 
 const k = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/${file}.glb`, format: 'glb', ...fit });
 const q = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/quaternius/${file}.fbx`, format: 'fbx', ...fit });
+const oa = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/openagents/${file}.glb`, format: 'glb', ...fit });
 const CHARS = 'abcdefgh'.split('');
 
 export const MANIFEST = {
@@ -18,10 +19,13 @@ export const MANIFEST = {
 
   monster: k('graveyard/character-zombie', { h: 2.2 }),
 
-  // Real Quaternius building art replaces the bare Kenney post frames. These stay gameplay-
-  // traversable for this pass so imported art can never reintroduce an invisible wall.
-  cabin: q('House1', { w: 7.5 }),
-  shed: q('House2', { w: 6.5 }),
+  // CC0 generated camp structures from OpenAgents/Quaternius replace suburban House1/House2 art.
+  // The log cabin is explicitly one storey and only ~1k triangles, which is a better fit for the
+  // real bunkhouse references and for iPad draw/triangle budgets.
+  cabin: oa('log_cabin', { w: 8.0 }),
+  shed: oa('woodshed', { w: 5.0 }),
+  boathouse: oa('boathouse', { w: 8.0 }),
+  trailShelter: oa('trail_shelter', { w: 5.5 }),
   lodge: q('Building1_Small', { w: 10.0 }),
 
   bunk: k('furniture/bedBunk', { w: 2.2 }),
@@ -39,6 +43,7 @@ export const MANIFEST = {
   tree: k('nature/tree_pineTallA', { h: 7 }),
   tree2: k('nature/tree_pineTallB', { h: 8.5 }),
   tree3: k('nature/tree_pineDefaultA', { h: 5.5 }),
+  groundBrush: k('nature/ground_grass', { w: 1.8 }),
   campfire: k('survival/campfire-pit', { w: 1.5 }),
   mug: k('food/mug', { w: 0.14 }),
   can: k('food/can', { h: 0.16 }),
@@ -62,7 +67,7 @@ export type AssetName = keyof typeof MANIFEST;
 export const ALWAYS_PRELOAD: AssetName[] = [
   'table', 'chair', 'bookshelf', 'bedSingle', 'sink', 'teddy',
   'lantern', 'campfire', 'logs', 'crate', 'cooler', 'radio', 'mug', 'can', 'backpack', 'bucket', 'barrel', 'paddle',
-  'camperMale', 'camperFemale', 'counselorMale', 'counselorFemale', 'cabin', 'shed', 'lodge',
+  'camperMale', 'camperFemale', 'counselorMale', 'counselorFemale', 'cabin', 'shed', 'boathouse', 'trailShelter', 'lodge', 'groundBrush',
 ];
 export const HDRI_FILE = 'hdri/venice_sunset_1k.hdr';
 export const camperName = (i: number): AssetName => `camper${(i % CHARS.length) + 1}` as AssetName;
