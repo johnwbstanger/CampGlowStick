@@ -96,11 +96,14 @@ export class TouchControls {
   private updateMove(clientX: number, clientY: number): void {
     const r = this.movePad.getBoundingClientRect();
     const radius = Math.max(34, r.width * .34);
+    const deadzone = 0.1;
     const dx = clientX - this.moveOrigin.x, dy = clientY - this.moveOrigin.y;
     const d = Math.hypot(dx, dy), m = d > radius ? radius / d : 1;
     const x = dx * m, y = dy * m;
     this.knob.style.transform = `translate(${x}px,${y}px)`;
-    this.player.setTouchMove(x / radius, y / radius);
+    const strength = Math.hypot(x, y) / radius;
+    const scale = strength <= deadzone ? 0 : (strength - deadzone) / ((1 - deadzone) * strength);
+    this.player.setTouchMove((x / radius) * scale, (y / radius) * scale);
   }
 
   private endMove(): void {
@@ -113,6 +116,7 @@ export class TouchControls {
   private bindMove(): void {
     const startPointer = (e: PointerEvent) => {
       e.preventDefault(); e.stopPropagation();
+      if (this.moveId >= 0) return;
       this.moveId = e.pointerId;
       try { this.movePad.setPointerCapture(e.pointerId); } catch {}
       const r = this.movePad.getBoundingClientRect();
@@ -120,8 +124,7 @@ export class TouchControls {
       this.updateMove(e.clientX, e.clientY);
     };
     const movePointer = (e: PointerEvent) => {
-      if (this.moveId < 0) return;
-      if (e.pointerId !== this.moveId && e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+      if (this.moveId < 0 || e.pointerId !== this.moveId) return;
       e.preventDefault(); e.stopPropagation();
       this.updateMove(e.clientX, e.clientY);
     };
@@ -139,13 +142,17 @@ export class TouchControls {
     this.movePad.addEventListener('pointermove', movePointer, { passive: false });
     this.movePad.addEventListener('pointerup', endPointer, { passive: false });
     this.movePad.addEventListener('pointercancel', endPointer, { passive: false });
+    this.movePad.addEventListener('lostpointercapture', (e) => { if (e.pointerId === this.moveId) this.endMove(); });
     window.addEventListener('pointermove', movePointer, { passive: false });
     window.addEventListener('pointerup', endPointer, { passive: false });
     window.addEventListener('pointercancel', endPointer, { passive: false });
+    window.addEventListener('blur', () => this.endMove());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this.endMove(); });
 
     this.movePad.addEventListener('touchstart', (e) => {
       e.preventDefault(); e.stopPropagation();
       const t = e.changedTouches[0]; if (!t) return;
+      if (this.touchMoveIdentifier >= 0) return;
       this.touchMoveIdentifier = t.identifier;
       const r = this.movePad.getBoundingClientRect();
       this.moveOrigin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
@@ -192,6 +199,7 @@ export class TouchControls {
   private bindLook(): void {
     this.lookPad.addEventListener('pointerdown', (e) => {
       e.preventDefault();
+      if (this.lookId >= 0) return;
       this.beginLook(e.pointerId, e.clientX, e.clientY);
       try { this.lookPad.setPointerCapture(e.pointerId); } catch {}
     }, { passive: false });
@@ -200,10 +208,12 @@ export class TouchControls {
     }, { passive: false });
     this.lookPad.addEventListener('pointerup', (e) => { if (e.pointerId === this.lookId) { e.preventDefault(); this.endLook(); } }, { passive: false });
     this.lookPad.addEventListener('pointercancel', () => { this.lookId = -1; this.lookMoved = false; }, { passive: false });
+    this.lookPad.addEventListener('lostpointercapture', (e) => { if (e.pointerId === this.lookId) { this.lookId = -1; this.lookMoved = false; } });
 
     this.lookPad.addEventListener('touchstart', (e) => {
       e.preventDefault();
       const t = e.changedTouches[0]; if (!t) return;
+      if (this.touchLookIdentifier >= 0) return;
       this.touchLookIdentifier = t.identifier;
       this.beginLook(-2, t.clientX, t.clientY);
     }, { passive: false });
