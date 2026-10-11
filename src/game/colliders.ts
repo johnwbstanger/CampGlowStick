@@ -4,15 +4,12 @@ export interface Body3 { x: number; y: number; z: number }
 const CELL = 10;
 interface Index { size: number; cells: Map<string, Box[]> }
 const cache = new WeakMap<Box[], Index>();
-const key = (x: number, z: number) => `${Math.floor(x / CELL)},${Math.floor(z / CELL)}`;
 
 function spatialIndex(boxes: Box[]): Index {
   const hit = cache.get(boxes);
   if (hit && hit.size === boxes.length) return hit;
   const cells = new Map<string, Box[]>();
   for (const b of boxes) {
-    // Door colliders are mutable. Index them where they are authored; when opened they are moved far
-    // away and fail the exact overlap check. When closed again they return to the same indexed cells.
     const x0 = Math.floor(b.minX / CELL), x1 = Math.floor(b.maxX / CELL), z0 = Math.floor(b.minZ / CELL), z1 = Math.floor(b.maxZ / CELL);
     for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) {
       const k = `${x},${z}`, list = cells.get(k);
@@ -22,7 +19,6 @@ function spatialIndex(boxes: Box[]): Index {
   const index = { size: boxes.length, cells }; cache.set(boxes, index); return index;
 }
 
-/** Nearby static boxes only. Keeps ~1,000 tree/building colliders cheap on mobile. */
 export function queryBoxes(boxes: Box[], x: number, z: number, radius = 1): Box[] {
   if (boxes.length < 80) return boxes;
   const index = spatialIndex(boxes), seen = new Set<Box>(), out: Box[] = [];
@@ -33,7 +29,6 @@ export function queryBoxes(boxes: Box[], x: number, z: number, radius = 1): Box[
   return out;
 }
 
-/** Push a vertical capsule (circle in XZ + height) out of nearby static AABB colliders. */
 export function resolveCapsule(pos: Body3, radius: number, height: number, boxes: Box[], half = Infinity): void {
   for (let pass = 0; pass < 2; pass++) {
     const candidates = queryBoxes(boxes, pos.x, pos.z, radius + .5);
