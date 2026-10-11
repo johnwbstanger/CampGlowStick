@@ -52,29 +52,18 @@ export function buildLayout(seed: number, need = 3): Layout {
   ];
 
   const clearings: Clearing[] = [
-    { x: 0, z: 6, rx: 22, rz: 18 },
-    { x: -58, z: -52, rx: 40, rz: 24 },
-    { x: 46, z: -55, rx: 42, rz: 25 },
-    { x: -57, z: 25, rx: 43, rz: 23 },
-    { x: 52, z: 27, rx: 45, rz: 23 },
-    { x: -7, z: 57, rx: 22, rz: 17 },
-    { x: 83, z: -15, rx: 20, rz: 15 },
-    { x: -42, z: 89, rx: 24, rz: 18 },
+    { x: 0, z: 6, rx: 22, rz: 18 }, { x: -58, z: -52, rx: 40, rz: 24 },
+    { x: 46, z: -55, rx: 42, rz: 25 }, { x: -57, z: 25, rx: 43, rz: 23 },
+    { x: 52, z: 27, rx: 45, rz: 23 }, { x: -7, z: 57, rx: 22, rz: 17 },
+    { x: 83, z: -15, rx: 20, rz: 15 }, { x: -42, z: 89, rx: 24, rz: 18 },
   ];
 
   const statics: Placed[] = [];
   const add = (name: AssetName, x: number, z: number, rot: number, solid = true) => statics.push({ name, x, z, rot, solid });
-
   add('campfire', 0, 6, 0);
-  // Imported cabin/building visuals are explicitly non-solid in this pass. This eliminates the
-  // invisible frame barriers on iPad while we author doorway-aligned collision for the new meshes.
   CABINS.forEach(([x, z]) => add('cabin', x, z, faceCentre(x, z), false));
-  add('shed', -102, -42, 0.25, false);
-  add('shed', 97, -29, -0.4, false);
-  // Put one of the larger Quaternius buildings close to the arrival area so the upgraded art is
-  // visible immediately instead of hidden at the edge of the 260 m map.
-  add('lodge', 15, 18, -0.2, false);
-  add('bus', 31, 2, Math.PI / 2);
+  add('shed', -102, -42, 0.25, false); add('shed', 97, -29, -0.4, false);
+  add('lodge', 15, 18, -0.2, false); add('bus', 31, 2, Math.PI / 2);
 
   const tents: [number, number, number][] = [
     [-17, 54, 0.4], [-5, 61, -0.3], [8, 56, 0.7], [15, 67, -0.8],
@@ -83,7 +72,6 @@ export function buildLayout(seed: number, need = 3): Layout {
     [-11, -24, 0.1], [7, -24, -0.25], [18, -31, 0.5],
   ];
   tents.forEach(([x, z, r]) => add('tent', x, z, r));
-
   add('canoe', 84, -4, 0.2); add('canoe', 87, 0, 0.1); add('canoe', 89, 4, 0.35);
   add('logs', 4, 11, 0.8); add('logs', -6, 2, 2.1); add('logs', -1, -2, 1.4);
   add('boulder', -115, -2, 0.2); add('boulder', 115, 47, 0.4); add('boulder', -15, 112, 1.2);
@@ -95,7 +83,6 @@ export function buildLayout(seed: number, need = 3): Layout {
     [-44, -64, 0.1], [51, -60, -0.2], [-8, 55, 0.3], [79, -12, -0.4],
   ];
   signs.forEach(([x, z, r]) => add('sign', x, z, r));
-
   CABINS.slice(0, 10).forEach(([x, z], i) => add('bunk', x + (i % 2 ? 3 : -3), z + (i % 3 ? 2.5 : -2.5), rng() * Math.PI * 2));
 
   const keepOut = statics.map((s) => [s.x, s.z] as const);
@@ -105,10 +92,16 @@ export function buildLayout(seed: number, need = 3): Layout {
   const inClearing = (x: number, z: number): boolean => clearings.some((c) => ((x - c.x) / c.rx) ** 2 + ((z - c.z) / c.rz) ** 2 < 1);
   const inLake = (x: number, z: number): boolean => ((x - water.x) / (water.rx + 5)) ** 2 + ((z - water.z) / (water.rz + 5)) ** 2 < 1;
 
+  // Human-authored exclusions + MIT poisson-disk-sampling derivative: vegetation now has blue-noise
+  // spacing instead of 6500 rejection attempts. This is deterministic for multiplayer and gives the
+  // woods natural gaps while keeping roads, buildings, the lake and arrival zone readable.
   const trees: Placed[] = [];
   const kinds: AssetName[] = ['tree', 'tree2', 'tree3'];
-  for (let i = 0; i < 6500 && trees.length < 500; i++) {
-    const x = (rng() * 2 - 1) * (WORLD_HALF - 4), z = (rng() * 2 - 1) * (WORLD_HALF - 4);
+  const extent = (WORLD_HALF - 4) * 2;
+  const forest = poisson2d({ width: extent, height: extent, minDistance: 4.0, maxDistance: 7.2, tries: 28, rng });
+  for (const [px, pz] of forest) {
+    if (trees.length >= 500) break;
+    const x = px - extent / 2, z = pz - extent / 2;
     if (keepOut.some(([kx, kz]) => Math.hypot(kx - x, kz - z) < 6)) continue;
     if (nearRoad(x, z) || inClearing(x, z) || inLake(x, z)) continue;
     if (Math.hypot(x - 31, z - 2) < 13) continue;
@@ -123,7 +116,6 @@ export function buildLayout(seed: number, need = 3): Layout {
   const lootSpots: [number, number][] = CABINS.map(([x, z], i) => [x + (i % 2 ? 2.5 : -2.5), z + (i % 3 ? 2 : -2)]);
   for (let i = 0; i < Math.max(need + 6, 9); i++) items.push({ model: lootModels[i % lootModels.length], kind: 'loot', x: lootSpots[i % lootSpots.length][0], z: lootSpots[i % lootSpots.length][1] });
 
-  /** Blue-noise ground props: spaced naturally and then filtered to the authored elliptical activity zone. */
   const zone = (cx: number, cz: number, rx: number, rz: number, pool: AssetName[], count: number, minDistance = 1.4) => {
     const pts = poisson2d({ width: rx * 2, height: rz * 2, minDistance, maxDistance: minDistance * 1.8, tries: 24, rng });
     let used = 0;
@@ -139,17 +131,11 @@ export function buildLayout(seed: number, need = 3): Layout {
   const campPool: AssetName[] = ['mug', 'bottle', 'can', 'bucket', 'lantern', 'radio', 'backpack', 'cooler', 'crate', 'sock'];
   const workPool: AssetName[] = ['crate', 'bucket', 'barrel', 'axe', 'bottle', 'can', 'paddle'];
   const waterfrontPool: AssetName[] = ['paddle', 'bucket', 'bottle', 'crate', 'cooler', 'backpack', 'radio'];
-
-  // Dynamic props are deliberately sparse; authored furniture and porch scenes provide the visual density.
   CABINS.forEach(([x, z], i) => zone(x + (i % 2 ? 2 : -2), z + (i % 3 ? 1 : -1), 5.2, 3.8, campPool, 4, 1.5));
-  zone(0, 6, 13, 9, campPool, 12, 1.7);
-  zone(-101, -42, 10, 7, workPool, 10, 1.65);
-  zone(97, -29, 10, 7, workPool, 10, 1.65);
-  zone(79, -3, 8, 10, waterfrontPool, 10, 1.55);
-  zone(-7, 58, 13, 9, campPool, 8, 1.7);
-  zone(-86, 74, 12, 8, campPool, 8, 1.7);
-  zone(101, 60, 12, 8, campPool, 8, 1.7);
-  zone(-46, 89, 11, 8, ['crate', 'cooler', 'backpack', 'radio', 'lantern', 'mug'], 7, 1.7);
+  zone(0, 6, 13, 9, campPool, 12, 1.7); zone(-101, -42, 10, 7, workPool, 10, 1.65);
+  zone(97, -29, 10, 7, workPool, 10, 1.65); zone(79, -3, 8, 10, waterfrontPool, 10, 1.55);
+  zone(-7, 58, 13, 9, campPool, 8, 1.7); zone(-86, 74, 12, 8, campPool, 8, 1.7);
+  zone(101, 60, 12, 8, campPool, 8, 1.7); zone(-46, 89, 11, 8, ['crate', 'cooler', 'backpack', 'radio', 'lantern', 'mug'], 7, 1.7);
   zone(28, 2, 8, 5, ['crate', 'cooler', 'backpack', 'radio', 'lantern'], 6, 1.6);
 
   const spawns: [number, number][] = Array.from({ length: 15 }, (_, i) => [22 + Math.cos((i / 15) * Math.PI * 2) * 5, 5 + Math.sin((i / 15) * Math.PI * 2) * 3]);

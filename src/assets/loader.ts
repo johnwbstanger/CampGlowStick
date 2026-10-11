@@ -11,6 +11,7 @@ const gltfLoader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
 const fbxLoader = new FBXLoader();
 const cache = new Map<string, Model>();
 const stdCache = new Map<THREE.Material, THREE.Material>();
+const touchLike = typeof navigator !== 'undefined' && (navigator.maxTouchPoints > 0 || /iPad|iPhone|Android/i.test(navigator.userAgent));
 
 /** Convert imported materials to the smooth matte finish used throughout Camp Glowstick. */
 function relight(m: THREE.Material): THREE.Material {
@@ -88,7 +89,10 @@ function polish(scene: THREE.Object3D): void {
     const m = o as THREE.Mesh;
     if (!m.isMesh) return;
     m.material = Array.isArray(m.material) ? m.material.map(relight) : relight(m.material);
-    m.castShadow = true;
+    // Mobile/iPad spends a disproportionate amount of GPU time redrawing hundreds of imported
+    // meshes into the sun shadow map. Keep receiving shadows for depth cues, but reserve casting
+    // for desktop and for intentionally-authored hero/procedural objects.
+    m.castShadow = !touchLike;
     m.receiveShadow = true;
     if (m.geometry?.attributes?.normal == null) m.geometry.computeVertexNormals();
   });

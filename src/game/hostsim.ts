@@ -3,11 +3,15 @@ import type { Session } from '../net/session';
 import type { CamperSnap, GameSnap, ItemDef, ItemSnap, Msg, PlayerState } from '../net/protocol';
 import { resolveCapsule, type Box } from './colliders';
 import { DAY_SECONDS, PLAYER, REACH, WORLD_HALF } from './constants';
+import { followerPlan, steeringVelocity } from './followerSteering';
+import { chooseCamperHides } from './camperSpawns';
+import { advanceBoardingStage, boardingTarget, type BoardingStage } from './busBoarding';
 import { GLOW_MASS, propInfo } from './items';
 import type { Layout } from './layout';
 import { newMonster, stepMonster } from './monster';
 import { NoiseBus, VOLUME, impactVolume, stepVolume, type Noise, type NoiseSource } from './noise';
 import { terrainHeight } from './terrain';
+import { flatForward, heldPose as viewHeldPose, releaseVelocity, viewForward } from './viewPhysics';
 import { setDoorOpen, type DoorView } from './world';
 
 interface SimPlayer { state: PlayerState; alive: boolean; stepT: number }
@@ -15,26 +19,20 @@ interface SimItem {
   def: ItemDef; body: CANNON.Body; mass: number; holder: number; lastHit: number;
   halfX: number; halfY: number; halfZ: number; thrownAt: number;
 }
-interface SimCamper { id: number; x: number; y: number; z: number; foundBy: number; rescued: boolean }
+interface SimCamper {
+  id: number; x: number; y: number; z: number; vx: number; vz: number;
+  foundBy: number; rescued: boolean; boardingStage: BoardingStage; seatIndex: number;
+}
 export interface Sizes { get(model: string): { x: number; y: number; z: number } | undefined }
 
 const CAMPER_NEED = 7;
-const CAMPER_HIDES: [number, number][] = [
-  [-78, -43], [-42, -58], [19, -55], [65, -39], [-67, 21], [-20, 32], [42, 28],
-  [82, 7], [-8, 58], [-88, 76], [97, 59], [-101, -39], [78, -7], [-45, 88],
-];
-const BUS_SEATS: [number, number][] = [
-  [-3.0, .62], [-3.0, -.62], [-1.75, .62], [-1.75, -.62], [-.5, .62], [-.5, -.62], [.78, .62],
-];
-const CAMPER_FOLLOW_SPEED = 5.4;
-const CAMPER_CATCHUP_SPEED = 7.3;
-const CAMPER_BOARD_SPEED = 4.4;
+const CAMPER_BOARD_SPEED = 4.8;
 const GUN_FIRE_COOLDOWN = 0.38;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /** Host-authoritative simulation: props, campers, doors, noise, monster AI, rescue and extraction. */
 export class HostSim {
-  world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.8, 0) });
+  world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.81, 0) });
   items = new Map<number, SimItem>();
   players = new Map<number, SimPlayer>();
   campers = new Map<number, SimCamper>();
@@ -62,10 +60,19 @@ export class HostSim {
     this.monster = newMonster(layout.monsterStart[0], layout.monsterStart[1]);
     this.world.broadphase = new CANNON.SAPBroadphase(this.world);
     this.world.allowSleep = true;
-    const mat = new CANNON.Material('prop');
-    this.world.defaultContactMaterial = new CANNON.ContactMaterial(mat, mat, { friction: 0.64, restitution: 0.18 });
+    this.world.defaultContactMaterial.friction = 0.62;
+    this.world.defaultContactMaterial.restitution = 0.12;
+    this.world.defaultContactMaterial.contactEquationStiffness = 1e7;
+    this.world.defaultContactMaterial.contactEquationRelaxation = 4;
+
+    const ground = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
+    ground.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+    ground.position.y = 0;
+    this.world.addBody(ground);
+
     const catchPlane = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
-    catchPlane.quaternion.setFromEuler(-Math.PI / 2, 0, 0); catchPlane.position.y = -7; this.world.addBody(catchPlane);
+    catchPlane.quaternion.setFromEuler(-Math.PI / 2, 0, 0); catchPlane.position.y = -20; this.world.addBody(catchPlane);
+
     for (const b of colliders) {
       const body = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Box(new CANNON.Vec3((b.maxX - b.minX) / 2, (b.maxY - b.minY) / 2, (b.maxZ - b.minZ) / 2)) });
       body.position.set((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, (b.minZ + b.maxZ) / 2); this.world.addBody(body);
@@ -77,9 +84,17 @@ export class HostSim {
       this.addItem(d, at[0], terrainHeight(at[0], at[1], layout) + Math.max(0.03, sz.y / 2) + 0.03 + extra, at[1]);
       this.nextId = Math.max(this.nextId, d.id + 1);
     }
+
+    // Hiding locations are authored indoor/outdoor anchors and shuffled deterministically from the world seed.
+    // This guarantees several campers begin inside real buildings instead of all seven spawning in open grass.
+    const hides = chooseCamperHides(layout, CAMPER_NEED);
     for (let i = 0; i < CAMPER_NEED; i++) {
-      const [x, z] = CAMPER_HIDES[(i * 2 + (layout.need % 3)) % CAMPER_HIDES.length];
-      this.campers.set(i, { id: i, x, y: terrainHeight(x, z, layout), z, foundBy: -1, rescued: false });
+      const hide = hides[i];
+      const x = hide?.x ?? layout.spawns[0][0], z = hide?.z ?? layout.spawns[0][1];
+      this.campers.set(i, {
+        id: i, x, y: terrainHeight(x, z, layout), z, vx: 0, vz: 0,
+        foundBy: -1, rescued: false, boardingStage: -1, seatIndex: i,
+      });
     }
     net.onHostMessage = (from, msg) => this.handle(from, msg);
     for (const p of net.players) this.addPlayer(p.id, layout.spawns[p.id % layout.spawns.length]);
@@ -105,17 +120,17 @@ export class HostSim {
     const body = new CANNON.Body({
       mass,
       shape: new CANNON.Box(new CANNON.Vec3(halfX, halfY, halfZ)),
-      linearDamping: 0.15,
-      angularDamping: 0.23,
-      sleepSpeedLimit: 0.12,
-      sleepTimeLimit: 0.7,
+      linearDamping: 0.09,
+      angularDamping: 0.14,
+      sleepSpeedLimit: 0.08,
+      sleepTimeLimit: 0.8,
     });
     body.position.set(x, y, z);
     body.quaternion.setFromEuler((Math.random() - .5) * .08, Math.random() * Math.PI * 2, (Math.random() - .5) * .08);
     const it: SimItem = { def, body, mass, holder: -1, lastHit: 0, halfX, halfY, halfZ, thrownAt: -Infinity };
     body.addEventListener('collide', (e: { contact: CANNON.ContactEquation }) => {
       const v = Math.abs(e.contact.getImpactVelocityAlongNormal());
-      if (v < 1.4 || this.time - it.lastHit < 0.3) return;
+      if (v < 1.2 || this.time - it.lastHit < 0.24) return;
       it.lastHit = this.time;
       const recentlyThrown = this.time - it.thrownAt < 3;
       const source: NoiseSource = recentlyThrown ? 'thrown-impact' : 'impact';
@@ -160,21 +175,41 @@ export class HostSim {
     this.noise(door.x, door.z, 1.25, 'wood', 'interaction');
   }
 
-  private forward(pl: SimPlayer): [number, number] { return [-Math.sin(pl.state.yaw), -Math.cos(pl.state.yaw)]; }
+  private forward(pl: SimPlayer): [number, number] { return flatForward(pl.state.yaw); }
 
   private fire(pl: SimPlayer): void {
-    const it = pl.state.held >= 0 ? this.items.get(pl.state.held) : undefined;
-    if (!it || it.def.model !== 'directorGun' || this.time - this.lastGunshotAt < GUN_FIRE_COOLDOWN) return;
+    const gun = pl.state.held >= 0 ? this.items.get(pl.state.held) : undefined;
+    if (!gun || gun.def.model !== 'directorGun' || this.time - this.lastGunshotAt < GUN_FIRE_COOLDOWN) return;
     this.lastGunshotAt = this.time;
-    const [fx, fz] = this.forward(pl), px = pl.state.p[0], pz = pl.state.p[2];
-    this.noise(px, pz, VOLUME.crash, 'metal', 'gunshot');
-    const dx = this.monster.x - px, dz = this.monster.z - pz;
-    const along = dx * fx + dz * fz;
-    const perp = Math.abs(dx * fz - dz * fx);
-    if (along > 0 && along < 42 && perp < Math.max(1.0, along * 0.035)) {
+    const eye = pl.state.crouch ? PLAYER.crouchEye : PLAYER.eye;
+    const ox = pl.state.p[0], oy = pl.state.p[1] + eye - 0.08, oz = pl.state.p[2];
+    const [fx, fy, fz] = viewForward(pl.state.yaw, pl.state.pitch);
+    this.noise(ox, oz, VOLUME.crash, 'metal', 'gunshot');
+
+    const mdx = this.monster.x - ox, mdy = 1.35 - oy, mdz = this.monster.z - oz;
+    const malong = mdx * fx + mdy * fy + mdz * fz;
+    const mx = mdx - fx * malong, my = mdy - fy * malong, mz = mdz - fz * malong;
+    const mperp = Math.hypot(mx, my, mz);
+    if (malong > 0 && malong < 42 && mperp < Math.max(0.75, malong * 0.028)) {
       this.monsterStunnedUntil = Math.max(this.monsterStunnedUntil, this.time + 7.5);
       this.monster.x += fx * 2.2; this.monster.z += fz * 2.2;
       this.monster.mode = 'search'; this.monster.timer = 2.5;
+    }
+
+    let hit: SimItem | undefined, bestAlong = Infinity;
+    for (const it of this.items.values()) {
+      if (it === gun || it.holder >= 0) continue;
+      const dx = it.body.position.x - ox, dy = it.body.position.y - oy, dz = it.body.position.z - oz;
+      const along = dx * fx + dy * fy + dz * fz;
+      if (along <= 0 || along >= 35 || along >= bestAlong) continue;
+      const px = dx - fx * along, py = dy - fy * along, pz = dz - fz * along;
+      const hitRadius = Math.max(0.22, Math.min(0.75, Math.hypot(it.halfX, it.halfY, it.halfZ) * 0.7));
+      if (Math.hypot(px, py, pz) <= hitRadius) { hit = it; bestAlong = along; }
+    }
+    if (hit) {
+      hit.body.wakeUp();
+      hit.body.applyImpulse(new CANNON.Vec3(fx * 7.5, fy * 7.5 + 0.4, fz * 7.5), hit.body.position);
+      this.noise(hit.body.position.x, hit.body.position.z, 3.5, hit.def.mat, 'impact');
     }
   }
 
@@ -188,7 +223,8 @@ export class HostSim {
       if (d < bd && (d < 1.15 || facing > 0.35)) { best = c; bd = d; }
     }
     if (!best) return false;
-    best.foundBy = id; this.noise(best.x, best.z, 0.8, 'step', 'interaction'); return true;
+    best.foundBy = id; best.vx = best.vz = 0; best.boardingStage = -1;
+    this.noise(best.x, best.z, 0.8, 'step', 'interaction'); return true;
   }
 
   private pickup(id: number, pl: SimPlayer): void {
@@ -211,14 +247,15 @@ export class HostSim {
     const pl = this.players.get(id); if (!pl || pl.state.held < 0) return;
     const it = this.items.get(pl.state.held); pl.state.held = -1; if (!it) return;
     it.holder = -1; it.body.type = CANNON.Body.DYNAMIC; it.body.mass = it.mass; it.body.updateMassProperties(); it.body.wakeUp();
-    const [fx, fz] = this.forward(pl), charge = Math.max(0, Math.min(1, force)), sp = thrown ? 7 + charge * 10 : 1.0;
-    it.body.velocity.set(fx * sp, thrown ? 2.2 + charge * 4.2 : 0.35, fz * sp);
+    const [vx, vy, vz] = releaseVelocity(pl.state.yaw, pl.state.pitch, force, it.mass, thrown);
+    it.body.velocity.set(vx, vy, vz);
     if (thrown) {
       it.thrownAt = this.time;
-      it.body.angularVelocity.set(Math.random() * 7 - 3.5, Math.random() * 7 - 3.5, Math.random() * 7 - 3.5);
+      const spin = 2.5 + Math.max(0, Math.min(1, force)) * 5.5;
+      it.body.angularVelocity.set((Math.random() - .5) * spin, (Math.random() - .5) * spin, (Math.random() - .5) * spin);
       this.noise(pl.state.p[0], pl.state.p[2], VOLUME.throw * 0.35, 'step', 'step');
     } else {
-      it.body.angularVelocity.set((Math.random() - .5) * .7, (Math.random() - .5) * .4, (Math.random() - .5) * .7);
+      it.body.angularVelocity.set((Math.random() - .5) * .25, (Math.random() - .5) * .2, (Math.random() - .5) * .25);
     }
   }
 
@@ -232,78 +269,86 @@ export class HostSim {
     return this.layout.statics.find((s) => s.name === 'bus') ?? { x: this.layout.extraction.x, z: this.layout.extraction.z, rot: 0 };
   }
 
-  private seatCamper(c: SimCamper): void {
+  private finishBoarding(c: SimCamper): void {
     if (c.rescued) return;
-    const bus = this.busPlacement();
-    const seat = BUS_SEATS[Math.min(this.rescued, BUS_SEATS.length - 1)];
-    const cos = Math.cos(bus.rot), sin = Math.sin(bus.rot);
-    c.x = bus.x + seat[0] * cos + seat[1] * sin;
-    c.z = bus.z - seat[0] * sin + seat[1] * cos;
-    c.y = terrainHeight(c.x, c.z, this.layout) + 0.18;
+    const [x, z] = boardingTarget(this.busPlacement(), 2, c.seatIndex);
+    c.x = x; c.z = z; c.y = terrainHeight(c.x, c.z, this.layout) + 0.18;
+    c.vx = c.vz = 0; c.boardingStage = 2;
     c.rescued = true; c.foundBy = -1; this.rescued++;
     this.noise(c.x, c.z, 0.7, 'step', 'interaction');
   }
 
-  /** Camp Snallygaster-style loose-arc follower motion with physical catch-up and bus boarding. */
+  /** Snallygaster escort formation, then a physical door -> aisle -> seat boarding route. */
   private stepCampers(dt: number): void {
     const nextSlot = new Map<number, number>();
+    const counts = new Map<number, number>();
+    for (const c of this.campers.values()) if (!c.rescued && c.foundBy >= 0) counts.set(c.foundBy, (counts.get(c.foundBy) ?? 0) + 1);
+
     for (const c of this.campers.values()) {
       if (c.rescued || c.foundBy < 0) continue;
       const pl = this.players.get(c.foundBy);
-      if (!pl || !pl.alive) { c.foundBy = -1; continue; }
+      if (!pl || !pl.alive) { c.foundBy = -1; c.vx = c.vz = 0; c.boardingStage = -1; continue; }
 
       const px = pl.state.p[0], pz = pl.state.p[2];
-      const slot = nextSlot.get(c.foundBy) ?? 0;
-      nextSlot.set(c.foundBy, slot + 1);
-      const followersForPlayer = [...this.campers.values()].filter((x) => !x.rescued && x.foundBy === c.foundBy).length;
-      const angle = Math.PI + (slot - (followersForPlayer - 1) / 2) * 0.42;
-      const radius = 2.0 + Math.floor(slot / 3) * 0.7;
-      const [fx, fz] = this.forward(pl);
-      const heading = Math.atan2(fx, fz);
-      let tx = px + Math.sin(heading + angle) * radius;
-      let tz = pz + Math.cos(heading + angle) * radius;
+      const camperToPlayer = Math.hypot(px - c.x, pz - c.z);
+      let tx: number, tz: number, speed: number, stopRadius = .08;
 
-      if (this.inBusZone(px, pz)) {
-        const bus = this.busPlacement();
-        tx = bus.x; tz = bus.z;
+      // Once committed, campers continue through the actual opening even if the counselor moves around inside.
+      if (c.boardingStage >= 0) {
+        [tx, tz] = boardingTarget(this.busPlacement(), c.boardingStage, c.seatIndex);
+        speed = CAMPER_BOARD_SPEED;
+        stopRadius = .34;
+      } else {
+        const slot = nextSlot.get(c.foundBy) ?? 0;
+        nextSlot.set(c.foundBy, slot + 1);
+        const plan = followerPlan(slot, counts.get(c.foundBy) ?? 1, camperToPlayer, pl.state.sprint, pl.state.moving);
+        const [fx, fz] = this.forward(pl);
+        const heading = Math.atan2(fx, fz);
+        tx = px + Math.sin(heading + plan.angle) * plan.radius;
+        tz = pz + Math.cos(heading + plan.angle) * plan.radius;
+        speed = plan.speed;
+        stopRadius = plan.stopRadius;
+        if (this.inBusZone(px, pz) && camperToPlayer < 6.5) {
+          c.boardingStage = 0;
+          [tx, tz] = boardingTarget(this.busPlacement(), 0, c.seatIndex);
+          speed = CAMPER_BOARD_SPEED;
+          stopRadius = .34;
+        }
       }
 
       const dx = tx - c.x, dz = tz - c.z, d = Math.hypot(dx, dz);
-      const camperToPlayer = Math.hypot(px - c.x, pz - c.z);
-      let speed = this.inBusZone(px, pz) ? CAMPER_BOARD_SPEED : CAMPER_FOLLOW_SPEED;
-      if (camperToPlayer > 5.5) speed = CAMPER_CATCHUP_SPEED;
-      if (camperToPlayer > 10) speed = 8.8;
-
-      if (d > .06) {
-        const step = Math.min(d, speed * dt);
-        const tryPos = { x: c.x + dx / d * step, y: terrainHeight(c.x, c.z, this.layout), z: c.z + dz / d * step };
-        resolveCapsule(tryPos, 0.22, 1.05, this.colliders, WORLD_HALF);
-        c.x = tryPos.x; c.z = tryPos.z;
+      if (d <= stopRadius) {
+        if (c.boardingStage >= 0) {
+          const next = advanceBoardingStage(c.boardingStage, d);
+          if (c.boardingStage === 2 && next === 2) { this.finishBoarding(c); continue; }
+          c.boardingStage = next;
+        }
+        [c.vx, c.vz] = steeringVelocity(0, 0, 0, c.vx, c.vz, dt);
+      } else {
+        [c.vx, c.vz] = steeringVelocity(dx, dz, speed, c.vx, c.vz, dt);
       }
-      c.y = terrainHeight(c.x, c.z, this.layout);
-      if (this.inBusZone(c.x, c.z)) this.seatCamper(c);
+
+      const tryPos = { x: c.x + c.vx * dt, y: terrainHeight(c.x, c.z, this.layout), z: c.z + c.vz * dt };
+      const beforeX = tryPos.x, beforeZ = tryPos.z;
+      resolveCapsule(tryPos, 0.22, 1.05, this.colliders, WORLD_HALF);
+      if (Math.abs(tryPos.x - beforeX) > 0.03) c.vx *= 0.2;
+      if (Math.abs(tryPos.z - beforeZ) > 0.03) c.vz *= 0.2;
+      c.x = tryPos.x; c.z = tryPos.z; c.y = terrainHeight(c.x, c.z, this.layout);
     }
   }
 
   private heldPose(pl: SimPlayer, it: SimItem): void {
-    const s = pl.state, [fx, fz] = this.forward(pl), rx = -fz, rz = fx;
+    const s = pl.state;
     const eye = s.crouch ? PLAYER.crouchEye : PLAYER.eye;
     const isGun = it.def.model === 'directorGun';
-    const forward = isGun ? .72 : .66;
-    const right = isGun ? .23 : .08;
-    const down = isGun ? .28 : .38;
-    it.body.position.set(s.p[0] + fx * forward + rx * right, s.p[1] + eye - down, s.p[2] + fz * forward + rz * right);
-    it.body.quaternion.setFromEuler(-s.pitch, s.yaw, 0, 'YXZ');
+    const pose = viewHeldPose(s, eye, {
+      forward: isGun ? .64 : .58,
+      right: isGun ? .20 : .08,
+      down: isGun ? .34 : .43,
+    });
+    it.body.position.set(...pose.position);
+    it.body.quaternion.setFromEuler(pose.euler[0], pose.euler[1], pose.euler[2], 'YXZ');
     it.body.velocity.setZero(); it.body.angularVelocity.setZero();
-  }
-
-  /** World-space vertical support radius of an oriented box. */
-  private supportY(it: SimItem): number {
-    const q = it.body.quaternion, x = q.x, y = q.y, z = q.z, w = q.w;
-    const r10 = 2 * (x * y + z * w);
-    const r11 = 1 - 2 * (x * x + z * z);
-    const r12 = 2 * (y * z - x * w);
-    return Math.abs(r10) * it.halfX + Math.abs(r11) * it.halfY + Math.abs(r12) * it.halfZ;
   }
 
   step(dt: number): void {
@@ -318,20 +363,7 @@ export class HostSim {
     }
     this.stepCampers(dt);
 
-    this.world.step(1 / 60, dt, 3);
-    for (const it of this.items.values()) {
-      if (it.holder >= 0) continue;
-      const floorY = terrainHeight(it.body.position.x, it.body.position.z, this.layout) + this.supportY(it);
-      if (it.body.position.y < floorY && it.body.velocity.y <= 0) {
-        it.body.position.y = floorY;
-        it.body.velocity.y = Math.max(0, -it.body.velocity.y * 0.09);
-        it.body.velocity.x *= 0.88; it.body.velocity.z *= 0.88;
-        it.body.angularVelocity.x *= 0.91; it.body.angularVelocity.y *= 0.91; it.body.angularVelocity.z *= 0.91;
-        const linear = Math.abs(it.body.velocity.x) + Math.abs(it.body.velocity.y) + Math.abs(it.body.velocity.z);
-        const angular = Math.abs(it.body.angularVelocity.x) + Math.abs(it.body.angularVelocity.y) + Math.abs(it.body.angularVelocity.z);
-        if (linear < 0.06 && angular < 0.08) it.body.sleep();
-      }
-    }
+    this.world.step(1 / 60, Math.min(dt, 0.05), 4);
     this.bus.prune(this.time);
 
     const ex = this.layout.extraction;
