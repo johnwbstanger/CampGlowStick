@@ -8,6 +8,7 @@ import type { Layout } from './layout';
 import { newMonster, stepMonster } from './monster';
 import { NoiseBus, VOLUME, impactVolume, stepVolume, type Noise, type NoiseSource } from './noise';
 import { terrainHeight } from './terrain';
+import { setDoorOpen, type DoorView } from './world';
 
 interface SimPlayer { state: PlayerState; alive: boolean; stepT: number }
 interface SimItem {
@@ -31,7 +32,7 @@ const CAMPER_BOARD_SPEED = 4.4;
 const GUN_FIRE_COOLDOWN = 0.38;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-/** Host-authoritative simulation: props, campers, noise, monster AI, rescue and extraction. */
+/** Host-authoritative simulation: props, campers, doors, noise, monster AI, rescue and extraction. */
 export class HostSim {
   world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.8, 0) });
   items = new Map<number, SimItem>();
@@ -49,7 +50,15 @@ export class HostSim {
   private monsterStunnedUntil = 0;
   private lastGunshotAt = -Infinity;
 
-  constructor(private net: Session, private layout: Layout, private colliders: Box[], private sizes: Sizes, defs: ItemDef[], spawnById: Map<number, [number, number]>) {
+  constructor(
+    private net: Session,
+    private layout: Layout,
+    private colliders: Box[],
+    private sizes: Sizes,
+    private doors: Map<string, DoorView>,
+    defs: ItemDef[],
+    spawnById: Map<number, [number, number]>,
+  ) {
     this.monster = newMonster(layout.monsterStart[0], layout.monsterStart[1]);
     this.world.broadphase = new CANNON.SAPBroadphase(this.world);
     this.world.allowSleep = true;
@@ -102,7 +111,6 @@ export class HostSim {
       sleepTimeLimit: 0.7,
     });
     body.position.set(x, y, z);
-    // Spawn with slight real-world asymmetry so rectangular props do not all settle on the same face.
     body.quaternion.setFromEuler((Math.random() - .5) * .08, Math.random() * Math.PI * 2, (Math.random() - .5) * .08);
     const it: SimItem = { def, body, mass, holder: -1, lastHit: 0, halfX, halfY, halfZ, thrownAt: -Infinity };
     body.addEventListener('collide', (e: { contact: CANNON.ContactEquation }) => {
@@ -134,6 +142,7 @@ export class HostSim {
     if (msg.t !== 'act') return;
     const held = pl.state.held;
     if (msg.a === 'night' && from === 0) this.night = !this.night;
+    else if (msg.a === 'door' && msg.target) this.toggleDoor(pl, msg.target);
     else if (msg.a === 'pick') {
       if (held >= 0) this.release(from, false);
       else if (!this.findCamper(from, pl)) this.pickup(from, pl);
@@ -141,6 +150,14 @@ export class HostSim {
     else if (msg.a === 'throw') this.release(from, true, msg.force ?? 0.35);
     else if (msg.a === 'snap') this.snap(from, pl, msg.color ?? 'green');
     else if (msg.a === 'fire') this.fire(pl);
+  }
+
+  private toggleDoor(pl: SimPlayer, id: string): void {
+    const door = this.doors.get(id); if (!door) return;
+    const dx = door.x - pl.state.p[0], dz = door.z - pl.state.p[2];
+    if (Math.hypot(dx, dz) > REACH + 1.25) return;
+    setDoorOpen(door, !door.open);
+    this.noise(door.x, door.z, 1.25, 'wood', 'interaction');
   }
 
   private forward(pl: SimPlayer): [number, number] { return [-Math.sin(pl.state.yaw), -Math.cos(pl.state.yaw)]; }
@@ -154,7 +171,6 @@ export class HostSim {
     const dx = this.monster.x - px, dz = this.monster.z - pz;
     const along = dx * fx + dz * fz;
     const perp = Math.abs(dx * fz - dz * fx);
-    // Deliberately forgiving hitscan cone: the emergency gun buys time; it does not delete the monster.
     if (along > 0 && along < 42 && perp < Math.max(1.0, along * 0.035)) {
       this.monsterStunnedUntil = Math.max(this.monsterStunnedUntil, this.time + 7.5);
       this.monster.x += fx * 2.2; this.monster.z += fz * 2.2;
@@ -202,7 +218,6 @@ export class HostSim {
       it.body.angularVelocity.set(Math.random() * 7 - 3.5, Math.random() * 7 - 3.5, Math.random() * 7 - 3.5);
       this.noise(pl.state.p[0], pl.state.p[2], VOLUME.throw * 0.35, 'step', 'step');
     } else {
-      // A placed item inherits a small believable rotational wobble instead of snapping flat.
       it.body.angularVelocity.set((Math.random() - .5) * .7, (Math.random() - .5) * .4, (Math.random() - .5) * .7);
     }
   }
@@ -229,11 +244,7 @@ export class HostSim {
     this.noise(c.x, c.z, 0.7, 'step', 'interaction');
   }
 
-  /**
-   * Camp Snallygaster-style follower motion: campers form a loose arc behind their counselor and
-   * actually run to catch up. No hard teleport leash. When the counselor reaches the bus, the
-   * formation target becomes the extraction door so campers visibly finish the trip themselves.
-   */
+  /** Camp Snallygaster-style loose-arc follower motion with physical catch-up and bus boarding. */
   private stepCampers(dt: number): void {
     const nextSlot = new Map<number, number>();
     for (const c of this.campers.values()) {
@@ -282,7 +293,6 @@ export class HostSim {
     const right = isGun ? .23 : .08;
     const down = isGun ? .28 : .38;
     it.body.position.set(s.p[0] + fx * forward + rx * right, s.p[1] + eye - down, s.p[2] + fz * forward + rz * right);
-    // Held objects now follow view yaw/pitch. This fixes the old world-north orientation bug.
     it.body.quaternion.setFromEuler(-s.pitch, s.yaw, 0, 'YXZ');
     it.body.velocity.setZero(); it.body.angularVelocity.setZero();
   }
@@ -344,9 +354,10 @@ export class HostSim {
     for (const it of this.items.values()) { const b = it.body, p = b.position, q = b.quaternion; items.push([it.def.id, r2(p.x), r2(p.y), r2(p.z), r2(q.x), r2(q.y), r2(q.z), r2(q.w), it.holder]); }
     const players: GameSnap['players'] = {}; for (const [id, p] of this.players) players[id] = { ...p.state, alive: p.alive };
     const campers: CamperSnap[] = [...this.campers.values()].map((c) => ({ id: c.id, x: r2(c.x), y: r2(c.y), z: r2(c.z), foundBy: c.foundBy, rescued: c.rescued }));
+    const doors = [...this.doors.values()].map((d) => ({ id: d.id, open: d.open }));
     const noise = this.fresh; this.fresh = []; const m = this.monster;
     const mode = this.time < this.monsterStunnedUntil ? 'stunned' : m.mode;
-    return { t: 's', time: r2(this.time), night: this.night, players, items, campers, rescued: this.rescued, camperNeed: CAMPER_NEED, monster: { p: [r2(m.x), 0, r2(m.z)], yaw: r2(m.yaw), mode }, noise, collected: this.collected, need: this.layout.need, over: this.over };
+    return { t: 's', time: r2(this.time), night: this.night, players, items, campers, doors, rescued: this.rescued, camperNeed: CAMPER_NEED, monster: { p: [r2(m.x), 0, r2(m.z)], yaw: r2(m.yaw), mode }, noise, collected: this.collected, need: this.layout.need, over: this.over };
   }
 
   tick(dt: number): void { this.step(dt); this.net.broadcast(this.snapshot()); }
