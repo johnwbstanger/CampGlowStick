@@ -243,15 +243,24 @@ export class HostSim {
     if (best) this.hold(id, pl, best);
   }
 
+  /** Ported from Camp_Snallygaster PhysicalProps: held items stay dynamic and are spring-driven. */
   private hold(id: number, pl: SimPlayer, it: SimItem): void {
-    it.holder = id; pl.state.held = it.def.id; it.body.type = CANNON.Body.KINEMATIC; it.body.mass = 0; it.body.updateMassProperties();
-    it.body.velocity.setZero(); it.body.angularVelocity.setZero(); this.noise(it.body.position.x, it.body.position.z, 0.6, it.def.mat === 'glass' ? 'plastic' : it.def.mat, 'interaction');
+    it.holder = id;
+    pl.state.held = it.def.id;
+    it.body.type = CANNON.Body.DYNAMIC;
+    it.body.mass = it.mass;
+    it.body.updateMassProperties();
+    it.body.allowSleep = false;
+    it.body.velocity.setZero();
+    it.body.angularVelocity.scale(0.35, it.body.angularVelocity);
+    it.body.wakeUp();
+    this.noise(it.body.position.x, it.body.position.z, 0.6, it.def.mat === 'glass' ? 'plastic' : it.def.mat, 'interaction');
   }
 
   private release(id: number, thrown: boolean, force = 0.35): void {
     const pl = this.players.get(id); if (!pl || pl.state.held < 0) return;
     const it = this.items.get(pl.state.held); pl.state.held = -1; if (!it) return;
-    it.holder = -1; it.body.type = CANNON.Body.DYNAMIC; it.body.mass = it.mass; it.body.updateMassProperties(); it.body.wakeUp();
+    it.holder = -1; it.body.type = CANNON.Body.DYNAMIC; it.body.mass = it.mass; it.body.updateMassProperties(); it.body.allowSleep = true; it.body.wakeUp();
     const [vx, vy, vz] = releaseVelocity(pl.state.yaw, pl.state.pitch, force, it.mass, thrown);
     it.body.velocity.set(vx, vy, vz);
     if (thrown) {
@@ -359,7 +368,8 @@ export class HostSim {
     }
   }
 
-  private heldPose(pl: SimPlayer, it: SimItem): void {
+  /** Mass-aware spring grab ported from the previous PhysicalProps implementation. */
+  private heldPose(pl: SimPlayer, it: SimItem, dt: number): void {
     const s = pl.state;
     const eye = s.crouch ? PLAYER.crouchEye : PLAYER.eye;
     const isGun = it.def.model === 'directorGun';
@@ -368,9 +378,23 @@ export class HostSim {
       right: isGun ? .20 : .08,
       down: isGun ? .34 : .43,
     });
-    it.body.position.set(...pose.position);
+    const [tx, ty, tz] = pose.position;
+    const dx = tx - it.body.position.x, dy = ty - it.body.position.y, dz = tz - it.body.position.z;
+    const massFactor = Math.min(1.25, 1.35 / Math.sqrt(Math.max(it.mass, .35)));
+    const gain = Math.min(22, (11 + dt * 60) * massFactor);
+    it.body.velocity.x += dx * gain * dt;
+    it.body.velocity.y += dy * gain * dt;
+    it.body.velocity.z += dz * gain * dt;
+    const speed = Math.hypot(it.body.velocity.x, it.body.velocity.y, it.body.velocity.z);
+    const maxSpeed = 11 * Math.min(1, 1.5 / Math.sqrt(Math.max(it.mass, .5)) + .28);
+    if (speed > maxSpeed) {
+      const scale = maxSpeed / speed;
+      it.body.velocity.x *= scale; it.body.velocity.y *= scale; it.body.velocity.z *= scale;
+    }
+    // Keep first-person orientation readable while translation remains fully dynamic/colliding.
     it.body.quaternion.setFromEuler(pose.euler[0], pose.euler[1], pose.euler[2], 'YXZ');
-    it.body.velocity.setZero(); it.body.angularVelocity.setZero();
+    it.body.angularVelocity.scale(.9, it.body.angularVelocity);
+    it.body.wakeUp();
   }
 
   step(dt: number): void {
@@ -380,7 +404,7 @@ export class HostSim {
       const s = pl.state;
       if (pl.alive && (pl.stepT -= dt) <= 0) { const v = stepVolume(s.moving, s.crouch, s.sprint); if (v > 0) this.noise(s.p[0], s.p[2], v, 'step', 'step'); pl.stepT = s.sprint ? 0.3 : 0.5; }
       const it = s.held >= 0 ? this.items.get(s.held) : undefined;
-      if (it) this.heldPose(pl, it);
+      if (it) this.heldPose(pl, it, dt);
       else if (s.held >= 0) s.held = -1;
     }
     this.stepCampers(dt);
