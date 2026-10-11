@@ -3,6 +3,7 @@ import type { Session } from '../net/session';
 import type { CamperSnap, GameSnap, ItemDef, ItemSnap, Msg, PlayerState } from '../net/protocol';
 import { resolveCapsule, type Box } from './colliders';
 import { DAY_SECONDS, PLAYER, REACH, WORLD_HALF } from './constants';
+import { CAMP_PLAN } from './campPlan';
 import { followerPlan, steeringVelocity } from './followerSteering';
 import { chooseCamperHides } from './camperSpawns';
 import { advanceBoardingStage, boardingTarget, type BoardingStage } from './busBoarding';
@@ -10,7 +11,7 @@ import { GLOW_MASS, propInfo } from './items';
 import type { Layout } from './layout';
 import { newMonster, stepMonster } from './monster';
 import { NoiseBus, VOLUME, impactVolume, stepVolume, type Noise, type NoiseSource } from './noise';
-import { terrainHeight } from './terrain';
+import { terrainHeight, terrainHeightfieldData } from './terrain';
 import { flatForward, heldPose as viewHeldPose, releaseVelocity, viewForward } from './viewPhysics';
 import { setDoorOpen, type DoorView } from './world';
 
@@ -65,13 +66,18 @@ export class HostSim {
     this.world.defaultContactMaterial.contactEquationStiffness = 1e7;
     this.world.defaultContactMaterial.contactEquationRelaxation = 4;
 
-    const ground = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
+    // Dynamic props now collide with exactly the same authored terrain sampled by the renderer,
+    // players and NPCs. Cannon's local +Y maps to world -Z after the standard -90° X rotation.
+    const sampled = terrainHeightfieldData(96);
+    const groundShape = new CANNON.Heightfield(sampled.data, { elementSize: sampled.elementSize });
+    const ground = new CANNON.Body({ type: CANNON.Body.STATIC });
+    ground.addShape(groundShape);
+    ground.position.set(-WORLD_HALF, 0, WORLD_HALF);
     ground.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
-    ground.position.y = 0;
     this.world.addBody(ground);
 
     const catchPlane = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
-    catchPlane.quaternion.setFromEuler(-Math.PI / 2, 0, 0); catchPlane.position.y = -20; this.world.addBody(catchPlane);
+    catchPlane.quaternion.setFromEuler(-Math.PI / 2, 0, 0); catchPlane.position.y = -24; this.world.addBody(catchPlane);
 
     for (const b of colliders) {
       const body = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Box(new CANNON.Vec3((b.maxX - b.minX) / 2, (b.maxY - b.minY) / 2, (b.maxZ - b.minZ) / 2)) });
@@ -85,8 +91,6 @@ export class HostSim {
       this.nextId = Math.max(this.nextId, d.id + 1);
     }
 
-    // Hiding locations are authored indoor/outdoor anchors and shuffled deterministically from the world seed.
-    // This guarantees several campers begin inside real buildings instead of all seven spawning in open grass.
     const hides = chooseCamperHides(layout, CAMPER_NEED);
     for (let i = 0; i < CAMPER_NEED; i++) {
       const hide = hides[i];
@@ -105,7 +109,7 @@ export class HostSim {
     const defs: ItemDef[] = layout.items.map((s, i) => { spawnById.set(i + 1, [s.x, s.z]); return { id: i + 1, model: s.model, kind: s.kind, mat: propInfo(s.model).mat }; });
     const gunId = defs.length + 1;
     defs.push({ id: gunId, model: 'directorGun', kind: 'prop', mat: 'metal' });
-    spawnById.set(gunId, [-27, 3.35]);
+    spawnById.set(gunId, [CAMP_PLAN.gun.x, CAMP_PLAN.gun.z]);
     return { defs, spawnById };
   }
 
@@ -278,7 +282,6 @@ export class HostSim {
     this.noise(c.x, c.z, 0.7, 'step', 'interaction');
   }
 
-  /** Snallygaster escort formation, then a physical door -> aisle -> seat boarding route. */
   private stepCampers(dt: number): void {
     const nextSlot = new Map<number, number>();
     const counts = new Map<number, number>();
@@ -293,7 +296,6 @@ export class HostSim {
       const camperToPlayer = Math.hypot(px - c.x, pz - c.z);
       let tx: number, tz: number, speed: number, stopRadius = .08;
 
-      // Once committed, campers continue through the actual opening even if the counselor moves around inside.
       if (c.boardingStage >= 0) {
         [tx, tz] = boardingTarget(this.busPlacement(), c.boardingStage, c.seatIndex);
         speed = CAMPER_BOARD_SPEED;
@@ -389,7 +391,7 @@ export class HostSim {
     const doors = [...this.doors.values()].map((d) => ({ id: d.id, open: d.open }));
     const noise = this.fresh; this.fresh = []; const m = this.monster;
     const mode = this.time < this.monsterStunnedUntil ? 'stunned' : m.mode;
-    return { t: 's', time: r2(this.time), night: this.night, players, items, campers, doors, rescued: this.rescued, camperNeed: CAMPER_NEED, monster: { p: [r2(m.x), 0, r2(m.z)], yaw: r2(m.yaw), mode }, noise, collected: this.collected, need: this.layout.need, over: this.over };
+    return { t: 's', time: r2(this.time), night: this.night, players, items, campers, doors, rescued: this.rescued, camperNeed: CAMPER_NEED, monster: { p: [r2(m.x), terrainHeight(m.x, m.z, this.layout), r2(m.z)], yaw: r2(m.yaw), mode }, noise, collected: this.collected, need: this.layout.need, over: this.over };
   }
 
   tick(dt: number): void { this.step(dt); this.net.broadcast(this.snapshot()); }
