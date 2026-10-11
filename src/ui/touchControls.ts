@@ -24,7 +24,7 @@ export class TouchControls {
   private lookMoved = false;
   private touchMoveIdentifier = -1;
   private touchLookIdentifier = -1;
-  private lastActionAt = 0;
+  private lastActionAt = -Infinity;
 
   constructor(private player: LocalPlayer, private actions: TouchActions) {
     this.root.className = 'touch-controls';
@@ -57,7 +57,21 @@ export class TouchControls {
     };
 
     const interact = button('USE', 'touch-use', actions.interact);
-    const jump = button('JUMP', 'touch-jump', () => this.player.jump());
+
+    // Jump is deliberately not passed through the generic 120 ms action debounce. iPad Safari can
+    // emit pointer/touch/click edges in different orders, and jump() is itself naturally idempotent
+    // while airborne. Binding both press and release edges makes the physical button reliable on
+    // Safari, Magic Keyboard trackpads, Pencil and Chromium's iPad emulation.
+    const jump = document.createElement('button');
+    jump.className = 'touch-btn touch-jump';
+    jump.textContent = 'JUMP';
+    const jumpNow = (e: Event) => { e.preventDefault(); e.stopPropagation(); this.player.jump(); };
+    jump.addEventListener('pointerdown', jumpNow, { passive: false });
+    jump.addEventListener('pointerup', jumpNow, { passive: false });
+    jump.addEventListener('touchstart', jumpNow, { passive: false });
+    jump.addEventListener('touchend', jumpNow, { passive: false });
+    jump.addEventListener('click', jumpNow);
+
     const flash = button('LIGHT', 'touch-flash', () => this.player.toggleFlash());
     const glow = button('GLOW', 'touch-glow', actions.glow);
     const map = button('MAP', 'touch-map', actions.map);
