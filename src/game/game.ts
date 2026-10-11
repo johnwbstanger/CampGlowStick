@@ -24,7 +24,7 @@ import { Lighting } from './lighting';
 import { falloff } from './noise';
 import { LocalPlayer } from './player';
 import { terrainHeight } from './terrain';
-import { buildWorld, type World } from './world';
+import { buildWorld, setDoorOpen, type DoorView, type World } from './world';
 
 type StartMsg = Extract<Msg, { t: 'start' }>;
 interface ItemView { def: ItemDef; obj: THREE.Object3D; target: THREE.Vector3; q: THREE.Quaternion; init: boolean }
@@ -99,6 +99,7 @@ export class Game {
     this.monster = new Actor('monster');
     this.monster.root.scale.set(0.78, 1.34, 0.78);
     this.monster.root.position.set(layout.monsterStart[0], terrainHeight(layout.monsterStart[0], layout.monsterStart[1], layout), layout.monsterStart[1]);
+    this.monster.root.visible = false;
     this.monster.play('walk');
     this.scene.add(this.monster.root);
 
@@ -112,7 +113,7 @@ export class Game {
     this.renderer.domElement.addEventListener('pointerup', this.pointerUp);
     addEventListener('keydown', this.key);
 
-    if (net.isHost) this.sim = new HostSim(net, layout, this.world.colliders, this.world.sizes, made.defs, made.spawnById);
+    if (net.isHost) this.sim = new HostSim(net, layout, this.world.colliders, this.world.sizes, this.world.doors, made.defs, made.spawnById);
     this.timers.push(window.setInterval(() => this.netTick(), TICK_MS));
     this.exposeHooks();
     this.renderer.setAnimationLoop(() => this.frame());
@@ -128,11 +129,25 @@ export class Game {
   private hasHeldItem(): boolean { return !!this.heldView(); }
   private hasGun(): boolean { return this.heldView()?.def.model === 'directorGun'; }
 
+  private nearestDoor(): { door: DoorView; d: number; facing: number } | null {
+    let best: { door: DoorView; d: number; facing: number } | null = null;
+    for (const door of this.world.doors.values()) {
+      const f = this.facingScore(door.x, door.z);
+      if (f.d > REACH + 1.25 || (f.d > 1.25 && f.facing < .18)) continue;
+      if (!best || f.d < best.d) best = { door, ...f };
+    }
+    return best;
+  }
+
   private interact = (quickThrow = true): void => {
     if (this.snap?.over || this.campMap.open) return;
     if (this.hasGun()) this.act('fire');
     else if (this.hasHeldItem()) this.act('throw', quickThrow ? 0.28 : 0.5);
-    else this.act('pick');
+    else {
+      const door = this.nearestDoor();
+      if (door) this.act('door', undefined, door.door.id);
+      else this.act('pick');
+    }
   };
 
   private pointerDown = (e: PointerEvent): void => {
@@ -160,10 +175,29 @@ export class Game {
     else if (/^Digit[1-5]$/.test(e.code)) { this.glow = GLOW_NAMES[Number(e.code.slice(5)) - 1]; this.hud.toast(`Glowstick: ${this.glow}`); }
   };
 
-  act(a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire', force?: number): void {
-    this.net.sendToHost({ t: 'act', a, color: this.glow, force });
+  act(a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire' | 'door', force?: number, target?: string): void {
+    this.net.sendToHost({ t: 'act', a, color: this.glow, force, target });
     if (a === 'snap') playMaterial('glow', 5);
-    if (a === 'fire') { playMaterial('metal', 8); this.hud.toast('BANG! The shot will draw attention.'); }
+    if (a === 'fire') {
+      playMaterial('metal', 8);
+      this.local.pitch = THREE.MathUtils.clamp(this.local.pitch + .035, -1.45, 1.45);
+      this.showMuzzleFlash();
+      this.hud.toast('BANG! The shot will draw attention.');
+    }
+  }
+
+  private showMuzzleFlash(): void {
+    const gun = this.heldView()?.obj;
+    if (!gun) return;
+    const socket = gun.getObjectByName('muzzle-socket') ?? gun;
+    const light = new THREE.PointLight('#ffd3a0', 950, 8, 2);
+    const flash = new THREE.Mesh(
+      new THREE.SphereGeometry(.08, 8, 6),
+      new THREE.MeshBasicMaterial({ color: '#fff1bd', transparent: true, opacity: .95 }),
+    );
+    flash.scale.set(1, 1, 2.4); flash.position.z = -.08;
+    socket.add(light, flash);
+    window.setTimeout(() => { socket.remove(light, flash); (flash.material as THREE.Material).dispose(); flash.geometry.dispose(); }, 55);
   }
 
   private addItemView(def: ItemDef): void {
@@ -183,6 +217,10 @@ export class Game {
   private applySnap(s: GameSnap): void {
     this.snap = s;
     this.light.setTime(s.time, s.night);
+    for (const door of s.doors) {
+      const view = this.world.doors.get(door.id);
+      if (view && view.open !== door.open) setDoorOpen(view, door.open);
+    }
     for (const [id, st] of Object.entries(s.players)) {
       const r = this.remotes.get(Number(id));
       if (r) { r.target = st; r.alive = st.alive; }
@@ -211,6 +249,7 @@ export class Game {
     const m = s.monster;
     this.monsterTarget.set(m.p[0], terrainHeight(m.p[0], m.p[2], this.layout), m.p[2]);
     this.monster.root.rotation.y = m.yaw;
+    this.monster.root.visible = s.night && m.mode !== 'idle';
     if (m.mode === 'chase' && this.monsterMode !== 'chase') growl();
     this.monsterMode = m.mode;
     for (const n of s.noise) { const d = Math.hypot(n.x - this.local.pos.x, n.z - this.local.pos.z); playMaterial(n.mat, falloff(n.vol, d) * 2); }
@@ -242,6 +281,8 @@ export class Game {
     if (this.campMap.open) return '';
     if (this.hasGun()) return `DIRECTOR'S GUN · Click / USE to fire · R to drop`;
     if (heldName) return `Holding ${heldName} · release click to throw · R to place`;
+    const door = this.nearestDoor();
+    if (door) return `Click / E — ${door.door.open ? 'close' : 'open'} ${door.door.id.replace('door:', '').replaceAll('-', ' ')} door`;
     const ex = this.layout.extraction;
     if (Math.hypot(this.local.pos.x - ex.x, this.local.pos.z - ex.z) < ex.r + 2) return 'BUS SAFE ZONE · board through the side door';
     let best = REACH + .7, text = '';
@@ -278,7 +319,7 @@ export class Game {
       if (moving) v.actor.root.rotation.y = Math.atan2(v.target.x - v.lastTarget.x, v.target.z - v.lastTarget.z) + Math.PI;
       v.actor.update(dt, moving, this.monsterMode === 'chase', v.foundBy < 0 && !v.rescued);
     }
-    if (!this.snap?.over) {
+    if (!this.snap?.over && this.monster.root.visible) {
       this.monster.root.position.lerp(this.monsterTarget, damp(8, dt));
       this.monster.play(this.monsterMode === 'idle' || this.monsterMode === 'stunned' ? 'idle' : this.monsterMode === 'chase' ? 'sprint' : 'walk'); this.monster.update(dt);
       this.monster.root.rotation.z = this.monsterMode === 'stunned' ? Math.sin(now * .02) * .08 : 0;
@@ -294,10 +335,11 @@ export class Game {
     window.__cg = {
       ready: true, myId: this.net.myId, isHost: this.net.isHost, need: this.layout.need, frames: () => this.frames, reach: REACH,
       teleport: (x: number, z: number) => this.local.teleport(x, z), look: (yaw: number) => { this.local.yaw = yaw; },
-      act: (a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire', force?: number) => this.act(a, force), setGlow: (c: string) => { this.glow = c; },
+      act: (a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire' | 'door', force?: number, target?: string) => this.act(a, force, target), setGlow: (c: string) => { this.glow = c; },
       local: () => ({ x: this.local.pos.x, y: this.local.pos.y, z: this.local.pos.z }),
       remote: (id: number) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, z: r.pos.z, tx: r.target?.p[0], tz: r.target?.p[2] } : null; }, remoteIds: () => [...this.remotes.keys()],
       campers: () => this.snap?.campers ?? [],
+      doors: () => [...this.world.doors.values()].map((d) => ({ id: d.id, open: d.open, x: d.x, z: d.z })),
       glows: () => [...this.items.values()].filter((v) => v.def.kind === 'glow').map((v) => ({ id: v.def.id, color: v.def.color, x: v.target.x, y: v.target.y, z: v.target.z })),
       items: () => [...this.items.values()].map((v) => ({ id: v.def.id, kind: v.def.kind, model: v.def.model, x: v.target.x, y: v.target.y, z: v.target.z })),
       snap: () => this.snap && { night: this.snap.night, over: this.snap.over, collected: this.snap.collected, rescued: this.snap.rescued, monster: this.snap.monster, noise: this.snap.noise.length, time: this.snap.time },
