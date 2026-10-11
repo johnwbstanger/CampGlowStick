@@ -3,12 +3,13 @@ import type { Session } from '../net/session';
 import type { CamperSnap, GameSnap, ItemDef, ItemSnap, Msg, PlayerState } from '../net/protocol';
 import { resolveCapsule, type Box } from './colliders';
 import { DAY_SECONDS, PLAYER, REACH, WORLD_HALF } from './constants';
+import { followerPlan, steeringVelocity } from './followerSteering';
 import { GLOW_MASS, propInfo } from './items';
 import type { Layout } from './layout';
 import { newMonster, stepMonster } from './monster';
 import { NoiseBus, VOLUME, impactVolume, stepVolume, type Noise, type NoiseSource } from './noise';
 import { terrainHeight } from './terrain';
-import { flatForward, heldPose as viewHeldPose, releaseVelocity } from './viewPhysics';
+import { flatForward, heldPose as viewHeldPose, releaseVelocity, viewForward } from './viewPhysics';
 import { setDoorOpen, type DoorView } from './world';
 
 interface SimPlayer { state: PlayerState; alive: boolean; stepT: number }
@@ -16,7 +17,7 @@ interface SimItem {
   def: ItemDef; body: CANNON.Body; mass: number; holder: number; lastHit: number;
   halfX: number; halfY: number; halfZ: number; thrownAt: number;
 }
-interface SimCamper { id: number; x: number; y: number; z: number; foundBy: number; rescued: boolean }
+interface SimCamper { id: number; x: number; y: number; z: number; vx: number; vz: number; foundBy: number; rescued: boolean }
 export interface Sizes { get(model: string): { x: number; y: number; z: number } | undefined }
 
 const CAMPER_NEED = 7;
@@ -27,9 +28,7 @@ const CAMPER_HIDES: [number, number][] = [
 const BUS_SEATS: [number, number][] = [
   [-3.0, .62], [-3.0, -.62], [-1.75, .62], [-1.75, -.62], [-.5, .62], [-.5, -.62], [.78, .62],
 ];
-const CAMPER_FOLLOW_SPEED = 5.4;
-const CAMPER_CATCHUP_SPEED = 7.3;
-const CAMPER_BOARD_SPEED = 4.4;
+const CAMPER_BOARD_SPEED = 4.8;
 const GUN_FIRE_COOLDOWN = 0.38;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -92,7 +91,7 @@ export class HostSim {
     }
     for (let i = 0; i < CAMPER_NEED; i++) {
       const [x, z] = CAMPER_HIDES[(i * 2 + (layout.need % 3)) % CAMPER_HIDES.length];
-      this.campers.set(i, { id: i, x, y: terrainHeight(x, z, layout), z, foundBy: -1, rescued: false });
+      this.campers.set(i, { id: i, x, y: terrainHeight(x, z, layout), z, vx: 0, vz: 0, foundBy: -1, rescued: false });
     }
     net.onHostMessage = (from, msg) => this.handle(from, msg);
     for (const p of net.players) this.addPlayer(p.id, layout.spawns[p.id % layout.spawns.length]);
@@ -176,18 +175,40 @@ export class HostSim {
   private forward(pl: SimPlayer): [number, number] { return flatForward(pl.state.yaw); }
 
   private fire(pl: SimPlayer): void {
-    const it = pl.state.held >= 0 ? this.items.get(pl.state.held) : undefined;
-    if (!it || it.def.model !== 'directorGun' || this.time - this.lastGunshotAt < GUN_FIRE_COOLDOWN) return;
+    const gun = pl.state.held >= 0 ? this.items.get(pl.state.held) : undefined;
+    if (!gun || gun.def.model !== 'directorGun' || this.time - this.lastGunshotAt < GUN_FIRE_COOLDOWN) return;
     this.lastGunshotAt = this.time;
-    const [fx, fz] = this.forward(pl), px = pl.state.p[0], pz = pl.state.p[2];
-    this.noise(px, pz, VOLUME.crash, 'metal', 'gunshot');
-    const dx = this.monster.x - px, dz = this.monster.z - pz;
-    const along = dx * fx + dz * fz;
-    const perp = Math.abs(dx * fz - dz * fx);
-    if (along > 0 && along < 42 && perp < Math.max(1.0, along * 0.035)) {
+    const eye = pl.state.crouch ? PLAYER.crouchEye : PLAYER.eye;
+    const ox = pl.state.p[0], oy = pl.state.p[1] + eye - 0.08, oz = pl.state.p[2];
+    const [fx, fy, fz] = viewForward(pl.state.yaw, pl.state.pitch);
+    this.noise(ox, oz, VOLUME.crash, 'metal', 'gunshot');
+
+    // Camera-aimed monster ray. The creature is tall, so use a chest-height target point.
+    const mdx = this.monster.x - ox, mdy = 1.35 - oy, mdz = this.monster.z - oz;
+    const malong = mdx * fx + mdy * fy + mdz * fz;
+    const mx = mdx - fx * malong, my = mdy - fy * malong, mz = mdz - fz * malong;
+    const mperp = Math.hypot(mx, my, mz);
+    if (malong > 0 && malong < 42 && mperp < Math.max(0.75, malong * 0.028)) {
       this.monsterStunnedUntil = Math.max(this.monsterStunnedUntil, this.time + 7.5);
       this.monster.x += fx * 2.2; this.monster.z += fz * 2.2;
       this.monster.mode = 'search'; this.monster.timer = 2.5;
+    }
+
+    // Dynamic props in the shot path get a physical kick instead of ignoring bullets entirely.
+    let hit: SimItem | undefined, bestAlong = Infinity;
+    for (const it of this.items.values()) {
+      if (it === gun || it.holder >= 0) continue;
+      const dx = it.body.position.x - ox, dy = it.body.position.y - oy, dz = it.body.position.z - oz;
+      const along = dx * fx + dy * fy + dz * fz;
+      if (along <= 0 || along >= 35 || along >= bestAlong) continue;
+      const px = dx - fx * along, py = dy - fy * along, pz = dz - fz * along;
+      const hitRadius = Math.max(0.22, Math.min(0.75, Math.hypot(it.halfX, it.halfY, it.halfZ) * 0.7));
+      if (Math.hypot(px, py, pz) <= hitRadius) { hit = it; bestAlong = along; }
+    }
+    if (hit) {
+      hit.body.wakeUp();
+      hit.body.applyImpulse(new CANNON.Vec3(fx * 7.5, fy * 7.5 + 0.4, fz * 7.5), hit.body.position);
+      this.noise(hit.body.position.x, hit.body.position.z, 3.5, hit.def.mat, 'impact');
     }
   }
 
@@ -201,7 +222,7 @@ export class HostSim {
       if (d < bd && (d < 1.15 || facing > 0.35)) { best = c; bd = d; }
     }
     if (!best) return false;
-    best.foundBy = id; this.noise(best.x, best.z, 0.8, 'step', 'interaction'); return true;
+    best.foundBy = id; best.vx = best.vz = 0; this.noise(best.x, best.z, 0.8, 'step', 'interaction'); return true;
   }
 
   private pickup(id: number, pl: SimPlayer): void {
@@ -228,7 +249,6 @@ export class HostSim {
     it.body.velocity.set(vx, vy, vz);
     if (thrown) {
       it.thrownAt = this.time;
-      // Spin follows release energy, but no random teleport/settling corrections are applied after release.
       const spin = 2.5 + Math.max(0, Math.min(1, force)) * 5.5;
       it.body.angularVelocity.set((Math.random() - .5) * spin, (Math.random() - .5) * spin, (Math.random() - .5) * spin);
       this.noise(pl.state.p[0], pl.state.p[2], VOLUME.throw * 0.35, 'step', 'step');
@@ -255,47 +275,52 @@ export class HostSim {
     c.x = bus.x + seat[0] * cos + seat[1] * sin;
     c.z = bus.z - seat[0] * sin + seat[1] * cos;
     c.y = terrainHeight(c.x, c.z, this.layout) + 0.18;
+    c.vx = c.vz = 0;
     c.rescued = true; c.foundBy = -1; this.rescued++;
     this.noise(c.x, c.z, 0.7, 'step', 'interaction');
   }
 
-  /** Camp Snallygaster-style loose-arc follower motion with physical catch-up and bus boarding. */
+  /** Smooth compact escort formation: match counselor pace, accelerate to catch up, never form a long conga line. */
   private stepCampers(dt: number): void {
     const nextSlot = new Map<number, number>();
+    const counts = new Map<number, number>();
+    for (const c of this.campers.values()) if (!c.rescued && c.foundBy >= 0) counts.set(c.foundBy, (counts.get(c.foundBy) ?? 0) + 1);
+
     for (const c of this.campers.values()) {
       if (c.rescued || c.foundBy < 0) continue;
       const pl = this.players.get(c.foundBy);
-      if (!pl || !pl.alive) { c.foundBy = -1; continue; }
+      if (!pl || !pl.alive) { c.foundBy = -1; c.vx = c.vz = 0; continue; }
 
       const px = pl.state.p[0], pz = pl.state.p[2];
       const slot = nextSlot.get(c.foundBy) ?? 0;
       nextSlot.set(c.foundBy, slot + 1);
-      const followersForPlayer = [...this.campers.values()].filter((x) => !x.rescued && x.foundBy === c.foundBy).length;
-      const angle = Math.PI + (slot - (followersForPlayer - 1) / 2) * 0.42;
-      const radius = 2.0 + Math.floor(slot / 3) * 0.7;
+      const camperToPlayer = Math.hypot(px - c.x, pz - c.z);
+      const plan = followerPlan(slot, counts.get(c.foundBy) ?? 1, camperToPlayer, pl.state.sprint, pl.state.moving);
       const [fx, fz] = this.forward(pl);
       const heading = Math.atan2(fx, fz);
-      let tx = px + Math.sin(heading + angle) * radius;
-      let tz = pz + Math.cos(heading + angle) * radius;
+      let tx = px + Math.sin(heading + plan.angle) * plan.radius;
+      let tz = pz + Math.cos(heading + plan.angle) * plan.radius;
+      let speed = plan.speed;
 
-      if (this.inBusZone(px, pz)) {
+      // Once the counselor and their escorted camper are both near the bus, the camper commits to boarding.
+      if (this.inBusZone(px, pz) && camperToPlayer < 6.5) {
         const bus = this.busPlacement();
-        tx = bus.x; tz = bus.z;
+        tx = bus.x; tz = bus.z; speed = CAMPER_BOARD_SPEED;
       }
 
       const dx = tx - c.x, dz = tz - c.z, d = Math.hypot(dx, dz);
-      const camperToPlayer = Math.hypot(px - c.x, pz - c.z);
-      let speed = this.inBusZone(px, pz) ? CAMPER_BOARD_SPEED : CAMPER_FOLLOW_SPEED;
-      if (camperToPlayer > 5.5) speed = CAMPER_CATCHUP_SPEED;
-      if (camperToPlayer > 10) speed = 8.8;
-
-      if (d > .06) {
-        const step = Math.min(d, speed * dt);
-        const tryPos = { x: c.x + dx / d * step, y: terrainHeight(c.x, c.z, this.layout), z: c.z + dz / d * step };
-        resolveCapsule(tryPos, 0.22, 1.05, this.colliders, WORLD_HALF);
-        c.x = tryPos.x; c.z = tryPos.z;
+      if (d <= plan.stopRadius && !this.inBusZone(px, pz)) {
+        [c.vx, c.vz] = steeringVelocity(0, 0, 0, c.vx, c.vz, dt);
+      } else {
+        [c.vx, c.vz] = steeringVelocity(dx, dz, speed, c.vx, c.vz, dt);
       }
-      c.y = terrainHeight(c.x, c.z, this.layout);
+
+      const tryPos = { x: c.x + c.vx * dt, y: terrainHeight(c.x, c.z, this.layout), z: c.z + c.vz * dt };
+      const beforeX = tryPos.x, beforeZ = tryPos.z;
+      resolveCapsule(tryPos, 0.22, 1.05, this.colliders, WORLD_HALF);
+      if (Math.abs(tryPos.x - beforeX) > 0.03) c.vx *= 0.2;
+      if (Math.abs(tryPos.z - beforeZ) > 0.03) c.vz *= 0.2;
+      c.x = tryPos.x; c.z = tryPos.z; c.y = terrainHeight(c.x, c.z, this.layout);
       if (this.inBusZone(c.x, c.z)) this.seatCamper(c);
     }
   }
@@ -326,7 +351,7 @@ export class HostSim {
     }
     this.stepCampers(dt);
 
-    // Fixed-step rigid body integration: ground, props and thrown objects now resolve through the
+    // Fixed-step rigid body integration: ground, props and thrown objects resolve through the
     // engine's contact solver instead of the old per-item Y clamp that made everything look scripted.
     this.world.step(1 / 60, Math.min(dt, 0.05), 4);
     this.bus.prune(this.time);
