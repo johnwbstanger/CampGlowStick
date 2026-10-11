@@ -1,5 +1,5 @@
 import type { Footprint, VegetationMask } from './semanticTypes';
-import { poisson2d } from '../vendor/poisson2d';
+import { PoissonDiskSampling } from '../vendor/poissonDiskSampling';
 
 export const pointInFootprint = (x: number, z: number, f: Footprint): boolean => {
   const c = Math.cos(-f.rot), s = Math.sin(-f.rot);
@@ -44,23 +44,21 @@ const mulberry32 = (seed: number): (() => number) => {
 };
 
 /**
- * Deterministic blue-noise scatter built on the project's vendored permissive Poisson implementation.
- * The important difference from the previous world-space randomizer is that every candidate passes
- * semantic masks before it is accepted, so vegetation cannot spawn inside buildings, roads, tents,
- * campfire clearances, the bus area, or any future authored exclusion volume.
+ * Deterministic semantic scatter powered by Kevin Chapelier's MIT
+ * poisson-disk-sampling fixed-density engine. Camp-specific code only supplies
+ * exclusion masks/acceptance rules; spacing itself comes from the vendored OSS library.
  */
 export function semanticScatter(options: ScatterOptions): [number, number][] {
   const rng = mulberry32(options.seed);
-  const points = poisson2d({
-    width: options.width,
-    height: options.height,
+  const sampler = new PoissonDiskSampling({
+    shape: [options.width, options.height],
     minDistance: options.minDistance,
     maxDistance: options.maxDistance,
     tries: 28,
-    rng,
-  });
+  }, rng);
+
   const out: [number, number][] = [];
-  for (const [px, pz] of points) {
+  for (const [px, pz] of sampler.fill()) {
     const x = options.originX + px;
     const z = options.originZ + pz;
     if (options.masks && !allowedByMasks(x, z, options.masks)) continue;
