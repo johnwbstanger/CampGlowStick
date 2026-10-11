@@ -32,8 +32,6 @@ export function camperHideCandidates(layout: Layout): CamperHide[] {
     }
   }
 
-  // Imported cabin interiors. These assets are currently non-solid, but the anchors are centered well inside
-  // the visible shell so they remain valid when mesh/nav colliders replace the temporary open collision model.
   const cabins = layout.statics.filter((s) => s.name === 'cabin');
   cabins.forEach((c, i) => {
     const [x, z] = localToWorld(i % 2 ? 1.2 : -1.2, i % 3 ? -.8 : .9, c.x, c.z, c.rot);
@@ -63,10 +61,22 @@ function shuffle<T>(values: T[], rng: () => number): T[] {
   return out;
 }
 
+function layoutSeed(layout: Layout): number {
+  // buildLayout already uses the round seed to vary deterministic prop positions. Hash a handful of those
+  // positions so hide selection varies with the same round without adding a network/protocol field.
+  let h = 0x43414d50;
+  for (const item of layout.items.slice(0, 12)) {
+    h ^= Math.round(item.x * 100) | 0;
+    h = Math.imul(h, 16777619);
+    h ^= Math.round(item.z * 100) | 0;
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
 /** Seven deterministic hides, always including multiple real building interiors. */
 export function chooseCamperHides(layout: Layout, count = 7): CamperHide[] {
-  const seed = ('seed' in layout && typeof layout.seed === 'number' ? layout.seed : 0x43414d50) ^ 0x47574f53;
-  const rng = mulberry32(seed >>> 0);
+  const rng = mulberry32((layoutSeed(layout) ^ 0x47574f53) >>> 0);
   const all = camperHideCandidates(layout);
   const inside = shuffle(all.filter((h) => h.kind === 'indoor'), rng);
   const outside = shuffle(all.filter((h) => h.kind === 'outdoor'), rng);
