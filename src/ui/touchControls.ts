@@ -24,7 +24,7 @@ export class TouchControls {
   private lookMoved = false;
   private touchMoveIdentifier = -1;
   private touchLookIdentifier = -1;
-  private lastActionAt = 0;
+  private lastActionAt = -Infinity;
 
   constructor(private player: LocalPlayer, private actions: TouchActions) {
     this.root.className = 'touch-controls';
@@ -57,7 +57,21 @@ export class TouchControls {
     };
 
     const interact = button('USE', 'touch-use', actions.interact);
-    const jump = button('JUMP', 'touch-jump', () => this.player.jump());
+
+    // Jump is deliberately not passed through the generic 120 ms action debounce. iPad Safari can
+    // emit pointer/touch/click edges in different orders, and jump() is itself naturally idempotent
+    // while airborne. Binding both press and release edges makes the physical button reliable on
+    // Safari, Magic Keyboard trackpads, Pencil and Chromium's iPad emulation.
+    const jump = document.createElement('button');
+    jump.className = 'touch-btn touch-jump';
+    jump.textContent = 'JUMP';
+    const jumpNow = (e: Event) => { e.preventDefault(); e.stopPropagation(); this.player.jump(); };
+    jump.addEventListener('pointerdown', jumpNow, { passive: false });
+    jump.addEventListener('pointerup', jumpNow, { passive: false });
+    jump.addEventListener('touchstart', jumpNow, { passive: false });
+    jump.addEventListener('touchend', jumpNow, { passive: false });
+    jump.addEventListener('click', jumpNow);
+
     const flash = button('LIGHT', 'touch-flash', () => this.player.toggleFlash());
     const glow = button('GLOW', 'touch-glow', actions.glow);
     const map = button('MAP', 'touch-map', actions.map);
@@ -103,36 +117,56 @@ export class TouchControls {
   }
 
   private bindMove(): void {
-    this.movePad.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
+    const startPointer = (e: PointerEvent) => {
+      e.preventDefault(); e.stopPropagation();
       this.moveId = e.pointerId;
       try { this.movePad.setPointerCapture(e.pointerId); } catch {}
       const r = this.movePad.getBoundingClientRect();
       this.moveOrigin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
       this.updateMove(e.clientX, e.clientY);
-    }, { passive: false });
-    this.movePad.addEventListener('pointermove', (e) => { if (e.pointerId === this.moveId) this.updateMove(e.clientX, e.clientY); }, { passive: false });
-    this.movePad.addEventListener('pointerup', (e) => { if (e.pointerId === this.moveId) this.endMove(); }, { passive: false });
-    this.movePad.addEventListener('pointercancel', () => this.endMove(), { passive: false });
+    };
+    const movePointer = (e: PointerEvent) => {
+      if (this.moveId < 0) return;
+      // Safari and synthetic iPad events have both been observed to change/omit pointerId after
+      // capture. With one movement thumb active, any touch/pen pointer is the intended joystick.
+      if (e.pointerId !== this.moveId && e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+      e.preventDefault();
+      this.updateMove(e.clientX, e.clientY);
+    };
+    const endPointer = (e: PointerEvent) => {
+      if (this.moveId < 0) return;
+      if (e.pointerId !== this.moveId && e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+      e.preventDefault();
+      this.endMove();
+    };
+
+    this.movePad.addEventListener('pointerdown', startPointer, { passive: false });
+    // Listen on window as well as the pad. Pointer capture is unreliable in several iPad Safari
+    // versions when an absolutely-positioned overlay sits above WebGL; window tracking keeps the
+    // joystick alive when the thumb leaves the circle or capture is silently lost.
+    window.addEventListener('pointermove', movePointer, { passive: false });
+    window.addEventListener('pointerup', endPointer, { passive: false });
+    window.addEventListener('pointercancel', endPointer, { passive: false });
 
     // Safari touch fallback. Some iPad versions intermittently skip pointermove on complex overlays.
     this.movePad.addEventListener('touchstart', (e) => {
-      e.preventDefault();
+      e.preventDefault(); e.stopPropagation();
       const t = e.changedTouches[0]; if (!t) return;
       this.touchMoveIdentifier = t.identifier;
       const r = this.movePad.getBoundingClientRect();
       this.moveOrigin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
       this.updateMove(t.clientX, t.clientY);
     }, { passive: false });
-    this.movePad.addEventListener('touchmove', (e) => {
+    window.addEventListener('touchmove', (e) => {
+      if (this.touchMoveIdentifier < 0) return;
+      const t = [...e.touches].find((x) => x.identifier === this.touchMoveIdentifier); if (!t) return;
       e.preventDefault();
-      const t = [...e.changedTouches].find((x) => x.identifier === this.touchMoveIdentifier); if (!t) return;
       this.updateMove(t.clientX, t.clientY);
     }, { passive: false });
-    this.movePad.addEventListener('touchend', (e) => {
-      if ([...e.changedTouches].some((x) => x.identifier === this.touchMoveIdentifier)) this.endMove();
+    window.addEventListener('touchend', (e) => {
+      if (this.touchMoveIdentifier >= 0 && [...e.changedTouches].some((x) => x.identifier === this.touchMoveIdentifier)) this.endMove();
     }, { passive: false });
-    this.movePad.addEventListener('touchcancel', () => this.endMove(), { passive: false });
+    window.addEventListener('touchcancel', () => { if (this.touchMoveIdentifier >= 0) this.endMove(); }, { passive: false });
   }
 
   private beginLook(id: number, x: number, y: number): void {

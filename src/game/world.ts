@@ -8,7 +8,25 @@ import { LANDMARKS, type LandmarkDef } from './landmarks';
 import type { Layout, Placed } from './layout';
 import { terrainHeight } from './terrain';
 
-export interface World { group: THREE.Group; colliders: Box[]; sizes: Map<string, THREE.Vector3> }
+export interface DoorView {
+  id: string;
+  x: number;
+  z: number;
+  pivot: THREE.Group;
+  collider: Box;
+  closed: Box;
+  open: boolean;
+}
+export interface World { group: THREE.Group; colliders: Box[]; sizes: Map<string, THREE.Vector3>; doors: Map<string, DoorView> }
+
+export function setDoorOpen(door: DoorView, open: boolean): void {
+  door.open = open;
+  door.pivot.rotation.y = open ? -Math.PI * 0.48 : 0;
+  if (open) {
+    // Player and monster collision read this mutable Box directly; park it outside the map while open.
+    Object.assign(door.collider, { minX: WORLD_HALF + 500, maxX: WORLD_HALF + 501, minZ: WORLD_HALF + 500, maxZ: WORLD_HALF + 501 });
+  } else Object.assign(door.collider, door.closed);
+}
 
 function instance(name: AssetName, spots: { x: number; z: number; rot: number; y?: number }[]): THREE.Group {
   const g = new THREE.Group();
@@ -56,10 +74,6 @@ function hollowBuildingColliders(out: Box[], b: Box, rot: number, door = 1.55): 
   }
 }
 
-/**
- * Kenney's survival structures visually read as open posts/frames. A wall-sized AABB around those
- * posts created the invisible barriers seen on iPad. Only the four visible corner posts collide now.
- */
 function openFrameColliders(out: Box[], b: Box): void {
   const post = 0.34;
   for (const x of [b.minX, b.maxX]) for (const z of [b.minZ, b.maxZ]) {
@@ -124,7 +138,7 @@ function addSign(group: THREE.Group, text: string, y: number, z: number, width: 
   const sign = new THREE.Mesh(new THREE.PlaneGeometry(width, width * .25), new THREE.MeshBasicMaterial({ map: tex })); sign.position.set(0, y, z); group.add(sign);
 }
 
-function makeLandmark(def: LandmarkDef, layout: Layout, colliders: Box[]): THREE.Group {
+function makeLandmark(def: LandmarkDef, layout: Layout, colliders: Box[], doors: Map<string, DoorView>): THREE.Group {
   const g = new THREE.Group(), y = terrainHeight(def.x, def.z, layout), t = .18;
   g.position.set(def.x, y, def.z); g.rotation.y = def.rot;
   const wall = new THREE.MeshStandardMaterial({ color: '#7b5b3a', roughness: .96, metalness: 0 });
@@ -139,9 +153,9 @@ function makeLandmark(def: LandmarkDef, layout: Layout, colliders: Box[]): THREE
   panel(def.w, .12, def.d, 0, .06, 0, floorMat);
   panel(def.w, def.h, t, 0, def.h / 2, -def.d / 2, wall);
   panel(t, def.h, def.d, -def.w / 2, def.h / 2, 0, wall); panel(t, def.h, def.d, def.w / 2, def.h / 2, 0, wall);
-  const door = 1.65;
-  panel((def.w - door) / 2, def.h, t, -(def.w + door) / 4, def.h / 2, def.d / 2, wall);
-  panel((def.w - door) / 2, def.h, t, (def.w + door) / 4, def.h / 2, def.d / 2, wall);
+  const doorW = 1.65;
+  panel((def.w - doorW) / 2, def.h, t, -(def.w + doorW) / 4, def.h / 2, def.d / 2, wall);
+  panel((def.w - doorW) / 2, def.h, t, (def.w + doorW) / 4, def.h / 2, def.d / 2, wall);
   panel(def.w + .45, .22, def.d + .65, 0, def.h + .12, 0, roof);
   panel(def.w - .7, .11, def.d - .7, 0, def.h - .2, 0, trim);
   addSign(g, def.label, def.h - .65, def.d / 2 + .11, Math.min(def.w * .62, 6));
@@ -164,7 +178,25 @@ function makeLandmark(def: LandmarkDef, layout: Layout, colliders: Box[]): THREE
 
   const swap = Math.abs(Math.sin(def.rot)) > .7, ww = swap ? def.d : def.w, dd = swap ? def.w : def.d;
   const b: Box = { minX: def.x - ww / 2, maxX: def.x + ww / 2, minZ: def.z - dd / 2, maxZ: def.z + dd / 2, minY: y, maxY: y + def.h };
-  hollowBuildingColliders(colliders, b, def.rot, door);
+  hollowBuildingColliders(colliders, b, def.rot, doorW);
+
+  // Snallygaster-style hinged door: visible panel and a synchronized mutable collision blocker.
+  const pivot = new THREE.Group();
+  pivot.position.set(-doorW / 2, 0, def.d / 2 + .035);
+  const leaf = new THREE.Mesh(new THREE.BoxGeometry(doorW, 2.25, .14), dark);
+  leaf.position.set(doorW / 2, 1.125, 0); leaf.castShadow = leaf.receiveShadow = true;
+  const knob = new THREE.Mesh(new THREE.SphereGeometry(.055, 10, 8), accent); knob.position.set(doorW * .39, .05, .09); leaf.add(knob);
+  pivot.add(leaf); g.add(pivot);
+
+  const frontLocal = def.d / 2 + .035, s = Math.sin(def.rot), c = Math.cos(def.rot);
+  const x = def.x + frontLocal * s, z = def.z + frontLocal * c;
+  const h0 = y, h1 = y + 2.3, thick = .18;
+  const closed: Box = Math.abs(c) >= Math.abs(s)
+    ? { minX: x - doorW / 2, maxX: x + doorW / 2, minZ: z - thick, maxZ: z + thick, minY: h0, maxY: h1 }
+    : { minX: x - thick, maxX: x + thick, minZ: z - doorW / 2, maxZ: z + doorW / 2, minY: h0, maxY: h1 };
+  const collider = { ...closed }; colliders.push(collider);
+  const id = `door:${def.kind}`;
+  doors.set(id, { id, x, z, pivot, collider, closed: { ...closed }, open: false });
   return g;
 }
 
@@ -175,14 +207,10 @@ function rotatedBox(out: Box[], p: Placed, lx0: number, lx1: number, lz0: number
   pushBox(out, Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs), y0, y1);
 }
 
-/** Imported Quaternius school-bus exterior with a simple walkable interior collision shell. */
 function makeBus(p: Placed, layout: Layout, colliders: Box[]): THREE.Group {
   const g = new THREE.Group(), y = terrainHeight(p.x, p.z, layout), L = 9.4, W = 3.05, H = 2.8, t = .18;
   g.position.set(p.x, y, p.z); g.rotation.y = p.rot;
   const visual = getModel('bus'); visual.name = 'quaternius-school-bus'; g.add(visual);
-
-  // Keep the interior traversable. The right side has a generous door opening rather than a full
-  // invisible wall. The visual mesh itself never creates collision.
   rotatedBox(colliders, p, -L / 2, L / 2, W / 2 - t, W / 2 + t, y, y + H);
   rotatedBox(colliders, p, -L / 2 - t, -L / 2 + t, -W / 2, W / 2, y, y + H);
   rotatedBox(colliders, p, L / 2 - t, L / 2 + t, -W / 2, W / 2, y, y + H);
@@ -192,9 +220,9 @@ function makeBus(p: Placed, layout: Layout, colliders: Box[]): THREE.Group {
 }
 
 export function buildWorld(layout: Layout): World {
-  const group = new THREE.Group(); const colliders: Box[] = []; const sizes = new Map<string, THREE.Vector3>();
+  const group = new THREE.Group(); const colliders: Box[] = []; const sizes = new Map<string, THREE.Vector3>(); const doors = new Map<string, DoorView>();
   group.add(makeTerrain(layout), makeRoadOverlay(layout), makeWater(layout));
-  for (const def of LANDMARKS) group.add(makeLandmark(def, layout, colliders));
+  for (const def of LANDMARKS) group.add(makeLandmark(def, layout, colliders, doors));
 
   const hosts: THREE.Object3D[] = [], hostBoxes: THREE.Box3[] = [];
   const place = (p: Placed) => {
@@ -223,5 +251,5 @@ export function buildWorld(layout: Layout): World {
   mark.rotation.x = -Math.PI / 2; mark.position.set(layout.extraction.x, terrainHeight(layout.extraction.x, layout.extraction.z, layout) + 0.08, layout.extraction.z); group.add(mark);
 
   for (const s of layout.items) if (!sizes.has(s.model)) sizes.set(s.model, sizeOf(s.model));
-  return { group, colliders, sizes };
+  return { group, colliders, sizes, doors };
 }

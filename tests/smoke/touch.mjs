@@ -42,16 +42,21 @@ try {
     if (!(await p.locator(sel).isVisible())) throw new Error(`missing touch control ${sel}`);
   }
 
-  // Jump must work through the actual touch button. It previously existed visually without always
-  // reaching player.jump() on iPad event sequences.
+  // Put the counselor on known flat ground before testing jump. This keeps the test independent of
+  // the arrival/bus spawn collider and proves the onscreen jump button itself drives LocalPlayer.jump().
+  await p.evaluate(() => { window.__cg.teleport(0, 12); window.__cg.look(0); });
+  await p.waitForTimeout(100);
   const beforeJump = await p.evaluate(() => window.__cg.local());
-  await p.locator('.touch-jump').tap();
+  const jump = p.locator('.touch-jump');
+  const jb = await jump.boundingBox();
+  if (!jb) throw new Error('jump button has no layout box');
+  const jx = jb.x + jb.width / 2, jy = jb.y + jb.height / 2;
+  await jump.dispatchEvent('pointerdown', { pointerId: 41, pointerType: 'touch', clientX: jx, clientY: jy, isPrimary: true, bubbles: true });
   await p.waitForFunction((y) => window.__cg.local().y > y + .08, beforeJump.y, { timeout: 2500 });
+  await jump.dispatchEvent('pointerup', { pointerId: 41, pointerType: 'touch', clientX: jx, clientY: jy, isPrimary: true, bubbles: true });
   await p.waitForTimeout(900);
 
-  // Put the counselor on known open ground, then perform the same center-to-forward drag a thumb
-  // makes on iPad. This avoids accidentally testing a bus wall/cabin collider at the random spawn.
-  await p.evaluate(() => { window.__cg.teleport(0, 12); window.__cg.look(0); });
+  // Perform the same center-to-forward drag a thumb makes on iPad.
   const pad = await p.locator('.touch-move').boundingBox();
   if (!pad) throw new Error('movement pad has no layout box');
   const cx = pad.x + pad.width / 2, cy = pad.y + pad.height / 2;
@@ -63,11 +68,16 @@ try {
   const afterMove = await p.evaluate(() => window.__cg.local());
   if (Math.hypot(afterMove.x - beforeMove.x, afterMove.z - beforeMove.z) < .25) throw new Error(`virtual joystick did not move the player: before=${JSON.stringify(beforeMove)} after=${JSON.stringify(afterMove)}`);
 
-  // USE must be a real touch/click alternative: move next to a camper and tap the onscreen button.
+  // USE must be a real touch/click alternative: move next to a camper and press the onscreen button.
   const camper = (await p.evaluate(() => window.__cg.campers()))[0];
   await p.evaluate(([x, z]) => { window.__cg.teleport(x, z + .55); window.__cg.look(Math.PI); }, [camper.x, camper.z]);
   await p.waitForTimeout(350);
-  await p.locator('.touch-use').tap();
+  const use = p.locator('.touch-use');
+  const ub = await use.boundingBox();
+  if (!ub) throw new Error('USE button has no layout box');
+  const ux = ub.x + ub.width / 2, uy = ub.y + ub.height / 2;
+  await use.dispatchEvent('pointerdown', { pointerId: 61, pointerType: 'touch', clientX: ux, clientY: uy, isPrimary: true, bubbles: true });
+  await use.dispatchEvent('pointerup', { pointerId: 61, pointerType: 'touch', clientX: ux, clientY: uy, isPrimary: true, bubbles: true });
   await p.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 6000 });
 
   if (errors.length) throw new Error(errors.slice(0, 5).join(' | '));

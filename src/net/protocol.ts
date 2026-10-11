@@ -3,7 +3,7 @@ export const TICK_MS = 1000 / TICK_HZ;
 export const MIN_CAP = 4;
 export const MAX_CAP = 15;
 export type RejectReason = 'full' | 'started' | 'version';
-export const PROTOCOL = 7;
+export const PROTOCOL = 8;
 
 export interface PlayerInfo { id: number; name: string; ready: boolean; peer: string }
 export type Vec3 = [number, number, number];
@@ -14,12 +14,13 @@ export interface PlayerState {
 }
 export interface ItemDef { id: number; model: string; kind: 'prop' | 'loot' | 'glow'; color?: string; mat: string }
 export type ItemSnap = [number, number, number, number, number, number, number, number, number];
-export interface NoiseEvt { x: number; z: number; vol: number; mat: string; t: number }
+export interface NoiseEvt { x: number; z: number; vol: number; mat: string; t: number; source?: string }
 export interface MonsterSnap { p: Vec3; yaw: number; mode: string }
 export interface CamperSnap { id: number; x: number; y: number; z: number; foundBy: number; rescued: boolean }
+export interface DoorSnap { id: string; open: boolean }
 export interface GameSnap {
   t: 's'; time: number; night: boolean; players: Record<number, PlayerState & { alive: boolean }>;
-  items: ItemSnap[]; campers: CamperSnap[]; rescued: number; camperNeed: number;
+  items: ItemSnap[]; campers: CamperSnap[]; doors: DoorSnap[]; rescued: number; camperNeed: number;
   monster: MonsterSnap; noise: NoiseEvt[]; collected: number; need: number; over: '' | 'win' | 'lose';
 }
 
@@ -35,6 +36,6 @@ export type Msg =
   | { t: 'start'; seed: number; need: number }
   | { t: 'bye' }
   | { t: 'p'; s: PlayerState }
-  | { t: 'act'; a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire'; color?: string; force?: number }
+  | { t: 'act'; a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire' | 'door'; color?: string; force?: number; target?: string }
   | { t: 'spawn'; def: ItemDef }
   | GameSnap;

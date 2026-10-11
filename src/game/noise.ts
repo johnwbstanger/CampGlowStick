@@ -1,5 +1,5 @@
 export type Material = 'metal' | 'plastic' | 'enamel' | 'glass' | 'wood' | 'can' | 'cloth' | 'step' | 'glow';
-export type NoiseSource = 'step' | 'impact' | 'thrown-impact' | 'glow' | 'interaction';
+export type NoiseSource = 'step' | 'impact' | 'thrown-impact' | 'glow' | 'interaction' | 'gunshot';
 export interface Noise { x: number; z: number; vol: number; mat: string; t: number; source?: NoiseSource }
 
 export const NOISE_TTL = 8;
