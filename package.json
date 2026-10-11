@@ -8,7 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "fetch-assets": "node scripts/fetch-assets.mjs",
+    "fetch-assets": "node scripts/fetch-assets.mjs && node scripts/assets/fetch-quaternius-nature.mjs",
+    "fetch-assets:core": "node scripts/fetch-assets.mjs",
+    "fetch-assets:nature": "node scripts/assets/fetch-quaternius-nature.mjs",
     "smoke": "node tests/smoke/smoke.mjs",
     "smoke:lobby15": "node tests/smoke/lobby15.mjs",
     "smoke:touch": "node tests/smoke/touch.mjs"
