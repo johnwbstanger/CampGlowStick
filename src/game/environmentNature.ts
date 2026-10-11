@@ -16,16 +16,10 @@ function distToSegment(px: number, pz: number, ax: number, az: number, bx: numbe
   return Math.hypot(px - (ax + t * dx), pz - (az + t * dz));
 }
 function nearRoad(layout: Layout, x: number, z: number, margin = 0): boolean {
-  return layout.roads.some((road) => road.points.slice(1).some(([bx, bz], i) => {
-    const [ax, az] = road.points[i]; return distToSegment(x, z, ax, az, bx, bz) < road.width * .5 + margin;
-  }));
+  return layout.roads.some((road) => road.points.slice(1).some(([bx, bz], i) => { const [ax, az] = road.points[i]; return distToSegment(x, z, ax, az, bx, bz) < road.width * .5 + margin; }));
 }
-function inClearing(layout: Layout, x: number, z: number, margin = 0): boolean {
-  return layout.clearings.some((c) => ((x - c.x) / (c.rx + margin)) ** 2 + ((z - c.z) / (c.rz + margin)) ** 2 < 1);
-}
-function inLake(layout: Layout, x: number, z: number, margin = 0): boolean {
-  const w = layout.water; return ((x - w.x) / (w.rx + margin)) ** 2 + ((z - w.z) / (w.rz + margin)) ** 2 < 1;
-}
+function inClearing(layout: Layout, x: number, z: number, margin = 0): boolean { return layout.clearings.some((c) => ((x - c.x) / (c.rx + margin)) ** 2 + ((z - c.z) / (c.rz + margin)) ** 2 < 1); }
+function inLake(layout: Layout, x: number, z: number, margin = 0): boolean { const w = layout.water; return ((x - w.x) / (w.rx + margin)) ** 2 + ((z - w.z) / (w.rz + margin)) ** 2 < 1; }
 
 interface NatureSpot { x: number; z: number; rot: number; scale: number }
 
@@ -41,8 +35,7 @@ function instanceVariant(model: LoadedNature, spots: NatureSpot[]): THREE.Group 
       place.compose(new THREE.Vector3(p.x, terrainHeight(p.x, p.z), p.z), q, s);
       im.setMatrixAt(i, final.multiplyMatrices(place, part.matrix));
     }
-    im.instanceMatrix.needsUpdate = true;
-    im.castShadow = !touchLike && model.entry.category === 'tree'; im.receiveShadow = true; im.frustumCulled = true;
+    im.instanceMatrix.needsUpdate = true; im.castShadow = !touchLike && model.entry.category === 'tree'; im.receiveShadow = true; im.frustumCulled = true;
     group.add(im);
   }
   return group;
@@ -64,11 +57,18 @@ function sectorized(models: LoadedNature[], spots: NatureSpot[], seed: number, r
     const list = buckets.get(k); if (list) list.push(p); else buckets.set(k, [p]);
   }
   for (const [k, list] of buckets) {
-    const [sx, sz] = k.split(',').map(Number), sector = distribute(models, list, seed ^ Math.imul(sx + 17, 73856093) ^ Math.imul(sz + 31, 19349663));
-    sector.name = `stream-sector:${category}:${k}`;
-    sector.userData.streamCenterX = -WORLD_HALF + sx * SECTOR + SECTOR / 2;
-    sector.userData.streamCenterZ = -WORLD_HALF + sz * SECTOR + SECTOR / 2;
-    sector.userData.streamRadius = radius;
+    const [sx, sz] = k.split(',').map(Number), centerX = -WORLD_HALF + sx * SECTOR + SECTOR / 2, centerZ = -WORLD_HALF + sz * SECTOR + SECTOR / 2;
+    const sector = distribute(models, list, seed ^ Math.imul(sx + 17, 73856093) ^ Math.imul(sz + 31, 19349663));
+    sector.name = `stream-sector:${category}:${k}`; sector.userData.streamCenterX = centerX; sector.userData.streamCenterZ = centerZ; sector.userData.streamRadius = radius;
+    sector.traverse((o) => {
+      const mesh = o as THREE.InstancedMesh;
+      if (!mesh.isInstancedMesh) return;
+      const fullCount = mesh.count;
+      mesh.onBeforeRender = (_renderer, _scene, camera) => {
+        const dx = camera.position.x - centerX, dz = camera.position.z - centerZ;
+        mesh.count = dx * dx + dz * dz <= radius * radius ? fullCount : 0;
+      };
+    });
     root.add(sector);
   }
   return root;
