@@ -1,5 +1,5 @@
 import type { Footprint, VegetationMask } from './semanticTypes';
-import { poisson2d } from '../vendor/poisson2d';
+import { PoissonDiskSampling2D } from '../vendor/poissonDiskSampling';
 
 export const pointInFootprint = (x: number, z: number, f: Footprint): boolean => {
   const c = Math.cos(-f.rot), s = Math.sin(-f.rot);
@@ -44,21 +44,18 @@ const mulberry32 = (seed: number): (() => number) => {
 };
 
 /**
- * Deterministic blue-noise scatter built on the project's vendored permissive Poisson implementation.
- * The important difference from the previous world-space randomizer is that every candidate passes
- * semantic masks before it is accepted, so vegetation cannot spawn inside buildings, roads, tents,
- * campfire clearances, the bus area, or any future authored exclusion volume.
+ * Uses Kevin Chapelier's MIT Poisson-disk algorithm (vendored/adapted in src/vendor) for the
+ * candidate distribution. Camp Glowstick only adds semantic acceptance masks on top of the upstream
+ * sampler: the distribution algorithm itself is no longer our home-grown poisson2d implementation.
  */
 export function semanticScatter(options: ScatterOptions): [number, number][] {
-  const rng = mulberry32(options.seed);
-  const points = poisson2d({
-    width: options.width,
-    height: options.height,
+  const sampler = new PoissonDiskSampling2D({
+    shape: [options.width, options.height],
     minDistance: options.minDistance,
     maxDistance: options.maxDistance,
     tries: 28,
-    rng,
-  });
+  }, mulberry32(options.seed));
+  const points = sampler.fill();
   const out: [number, number][] = [];
   for (const [px, pz] of points) {
     const x = options.originX + px;

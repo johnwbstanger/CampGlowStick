@@ -1,9 +1,8 @@
 import type { Box } from './colliders';
 import { WORLD_HALF } from './constants';
+import { ThreePathfindingAStar, type AStarNode } from '../vendor/threePathfindingAStar';
 
 export interface NavPoint { x: number; z: number }
-
-const key = (x: number, z: number) => `${x},${z}`;
 
 function blocked(x: number, z: number, colliders: Box[], radius: number): boolean {
   if (Math.abs(x) > WORLD_HALF - radius || Math.abs(z) > WORLD_HALF - radius) return true;
@@ -24,58 +23,78 @@ export function navLineClear(a: NavPoint, b: NavPoint, colliders: Box[], radius:
   return true;
 }
 
+/**
+ * Grid adapter around the MIT three-pathfinding/javascript-astar core. The grid is temporary:
+ * once authored building geometry is ready, this same call site can be switched to a true navmesh
+ * without reworking camper/monster state machines.
+ */
 export function findRoute(start: NavPoint, goal: NavPoint, colliders: Box[], radius: number, cell = 3): NavPoint[] {
   if (navLineClear(start, goal, colliders, radius)) return [goal];
 
-  const toCell = (v: number) => Math.round(v / cell);
+  const minC = Math.ceil((-WORLD_HALF + radius) / cell);
+  const maxC = Math.floor((WORLD_HALF - radius) / cell);
+  const toCell = (v: number) => Math.max(minC, Math.min(maxC, Math.round(v / cell)));
   const sx = toCell(start.x), sz = toCell(start.z), gx = toCell(goal.x), gz = toCell(goal.z);
-  const minC = Math.ceil((-WORLD_HALF + radius) / cell), maxC = Math.floor((WORLD_HALF - radius) / cell);
-  const open: { x: number; z: number; f: number }[] = [{ x: sx, z: sz, f: 0 }];
-  const came = new Map<string, string>();
-  const gScore = new Map<string, number>([[key(sx, sz), 0]]);
-  const closed = new Set<string>();
-  const coords = new Map<string, [number, number]>([[key(sx, sz), [sx, sz]]]);
-  const heuristic = (x: number, z: number) => Math.hypot(gx - x, gz - z);
+
+  const nodes: AStarNode[] = [];
+  const index = new Map<string, number>();
+  const key = (x: number, z: number) => `${x},${z}`;
+
+  for (let z = minC; z <= maxC; z++) {
+    for (let x = minC; x <= maxC; x++) {
+      const wx = x * cell, wz = z * cell;
+      if (blocked(wx, wz, colliders, radius)) continue;
+      index.set(key(x, z), nodes.length);
+      nodes.push({ centroid: { x: wx, y: 0, z: wz }, neighbours: [], cost: 1 });
+    }
+  }
+
   const dirs = [
     [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
     [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2],
   ] as const;
 
-  let found = '';
-  for (let expanded = 0; open.length && expanded < 6500; expanded++) {
-    let best = 0;
-    for (let i = 1; i < open.length; i++) if (open[i].f < open[best].f) best = i;
-    const cur = open.splice(best, 1)[0], ck = key(cur.x, cur.z);
-    if (closed.has(ck)) continue;
-    closed.add(ck);
-    if (Math.abs(cur.x - gx) <= 1 && Math.abs(cur.z - gz) <= 1) { found = ck; break; }
-
+  for (const [gridKey, i] of index) {
+    const [x, z] = gridKey.split(',').map(Number);
+    const node = nodes[i];
     for (const [ox, oz, cost] of dirs) {
-      const nx = cur.x + ox, nz = cur.z + oz;
-      if (nx < minC || nx > maxC || nz < minC || nz > maxC) continue;
-      const wx = nx * cell, wz = nz * cell;
-      if (blocked(wx, wz, colliders, radius)) continue;
-      if (ox && oz && (blocked((cur.x + ox) * cell, cur.z * cell, colliders, radius) || blocked(cur.x * cell, (cur.z + oz) * cell, colliders, radius))) continue;
-      const nk = key(nx, nz), tentative = (gScore.get(ck) ?? Infinity) + cost;
-      if (tentative >= (gScore.get(nk) ?? Infinity)) continue;
-      came.set(nk, ck); coords.set(nk, [nx, nz]); gScore.set(nk, tentative);
-      open.push({ x: nx, z: nz, f: tentative + heuristic(nx, nz) });
+      const ni = index.get(key(x + ox, z + oz));
+      if (ni === undefined) continue;
+      if (ox && oz) {
+        const a = index.get(key(x + ox, z));
+        const b = index.get(key(x, z + oz));
+        if (a === undefined || b === undefined) continue;
+      }
+      node.neighbours.push(ni);
+      // three-pathfinding's upstream A* stores cost on the destination node.
+      nodes[ni].cost = Math.min(nodes[ni].cost ?? cost, cost);
     }
   }
-  if (!found) return [];
 
-  const cells: [number, number][] = [];
-  let k = found;
-  while (k !== key(sx, sz)) {
-    const p = coords.get(k); if (!p) break;
-    cells.push(p); const prev = came.get(k); if (!prev) break; k = prev;
-  }
-  cells.reverse();
-  const raw: NavPoint[] = cells.map(([x, z]) => ({ x: x * cell, z: z * cell }));
+  const nearestNode = (cx: number, cz: number): AStarNode | undefined => {
+    const exact = index.get(key(cx, cz));
+    if (exact !== undefined) return nodes[exact];
+    let best: AStarNode | undefined, bestD = Infinity;
+    const wx = cx * cell, wz = cz * cell;
+    for (const n of nodes) {
+      const d = (n.centroid.x - wx) ** 2 + (n.centroid.z - wz) ** 2;
+      if (d < bestD) { bestD = d; best = n; }
+    }
+    return best;
+  };
+
+  const startNode = nearestNode(sx, sz), endNode = nearestNode(gx, gz);
+  if (!startNode || !endNode) return [];
+  const pathNodes = ThreePathfindingAStar.search(nodes, startNode, endNode);
+  if (!pathNodes.length) return [];
+
+  const raw: NavPoint[] = pathNodes.map((n) => ({ x: n.centroid.x, z: n.centroid.z }));
   raw.push(goal);
 
+  // String-pull against the real collision boxes after graph search. This keeps routes compact and
+  // avoids robotic grid-square motion while the navmesh migration is still underway.
   const out: NavPoint[] = [];
-  let anchor: NavPoint = start, i = 0;
+  let anchor = start, i = 0;
   while (i < raw.length) {
     let far = i;
     for (let j = raw.length - 1; j >= i; j--) {
@@ -86,7 +105,6 @@ export function findRoute(start: NavPoint, goal: NavPoint, colliders: Box[], rad
   return out;
 }
 
-/** Backward-compatible numeric wrapper used by older tests/tools. */
 export function findPath(sx: number, sz: number, gx: number, gz: number, colliders: Box[], radius: number, cell = 3): NavPoint[] {
   return findRoute({ x: sx, z: sz }, { x: gx, z: gz }, colliders, radius, cell);
 }
