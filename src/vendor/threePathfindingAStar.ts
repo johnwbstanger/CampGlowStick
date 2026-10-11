@@ -61,8 +61,10 @@ export class ThreePathfindingAStar {
     }
   }
   private static heuristic(a: AStarCentroid, b: AStarCentroid): number {
-    const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
-    return dx * dx + dy * dy + dz * dz;
+    // The upstream navmesh uses squared distance because its polygon-edge costs are geometric.
+    // Glowstick's adapter graph uses per-cell movement costs; Euclidean distance is admissible here
+    // and avoids the squared heuristic over-weighting long routes around buildings.
+    return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
   }
   static search(graph: AStarNode[], start: AStarNode, end: AStarNode): AStarNode[] {
     this.init(graph);
