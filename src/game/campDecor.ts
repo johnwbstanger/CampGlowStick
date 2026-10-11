@@ -24,6 +24,13 @@ function localPoint(cx: number, cz: number, rot: number, lx: number, lz: number)
   return [cx + lx * c + lz * s, cz - lx * s + lz * c];
 }
 
+function warmLight(x: number, y: number, z: number, intensity: number, distance: number, color = '#ffb15a'): THREE.PointLight {
+  const light = new THREE.PointLight(color, intensity, distance, 2);
+  light.position.set(x, y, z);
+  light.castShadow = false;
+  return light;
+}
+
 function furnishedTable(x: number, z: number, rot: number, lantern = true): THREE.Group {
   const g = new THREE.Group();
   g.name = 'imported-table-scene';
@@ -35,9 +42,7 @@ function furnishedTable(x: number, z: number, rot: number, lantern = true): THRE
   if (lantern) {
     const l = place('lantern', x + Math.cos(rot) * .3, z - Math.sin(rot) * .3, rot, .88);
     g.add(l);
-    const light = new THREE.PointLight('#ffb15a', 9, 6.5, 2);
-    light.position.set(x, 1.22, z);
-    g.add(light);
+    g.add(warmLight(x, 1.26, z, 135, 8));
   }
   for (const side of [-1, 1]) {
     const [mx, mz] = localPoint(x, z, rot, side * .48, .15);
@@ -50,9 +55,15 @@ function litCampfire(x: number, z: number, rot = 0): THREE.Group {
   const g = new THREE.Group();
   g.name = 'imported-campfire-scene';
   g.add(place('campfire', x, z, rot));
-  const light = new THREE.PointLight('#ff8c36', 42, 12, 2);
-  light.position.set(x, 1.0, z);
-  g.add(light);
+  // Three r18x light units made the old value nearly invisible against dusk. Give campfires a
+  // deliberate practical-light pool so players can navigate by them as darkness arrives.
+  g.add(warmLight(x, 1.05, z, 620, 17, '#ff7b2d'));
+  g.add(warmLight(x, 2.2, z, 180, 8, '#ffc36c'));
+  const ember = new THREE.Mesh(
+    new THREE.SphereGeometry(.23, 10, 8),
+    new THREE.MeshBasicMaterial({ color: '#ff9a38', transparent: true, opacity: .72 }),
+  );
+  ember.position.set(x, .42, z); ember.scale.set(1.3, .65, 1.3); g.add(ember);
   for (let i = 0; i < 4; i++) {
     const a = i * Math.PI / 2 + .35;
     g.add(place('logs', x + Math.cos(a) * 2.35, z + Math.sin(a) * 2.35, a + Math.PI / 2));
@@ -61,7 +72,6 @@ function litCampfire(x: number, z: number, rot = 0): THREE.Group {
 }
 
 function decorateCabin(g: THREE.Group, x: number, z: number, rot: number, index: number): void {
-  // Cabins get small authored porch vignettes instead of a ring of random props.
   const rng = mulberry32(0xC0FFEE + index * 977);
   const front = 3.9;
   const side = index % 2 ? 1 : -1;
@@ -69,9 +79,11 @@ function decorateCabin(g: THREE.Group, x: number, z: number, rot: number, index:
   g.add(place('chair', cx, cz, rot + Math.PI));
   const [lx, lz] = localPoint(x, z, rot, -side * 1.25, front + .1);
   g.add(place('lantern', lx, lz, rot, .03));
-  const light = new THREE.PointLight('#f2b766', 7, 5, 2);
-  light.position.set(lx, 1.0, lz);
-  g.add(light);
+  g.add(warmLight(lx, 1.12, lz, 120, 7.5, '#f2b766'));
+  // Warm spill from the cabin front makes the structure readable and gives the monster/player
+  // silhouette something to cross at night even before final authored interior meshes land.
+  const [ix, iz] = localPoint(x, z, rot, 0, .45);
+  g.add(warmLight(ix, 1.9, iz, 165, 9, '#ffd08a'));
   const [bx, bz] = localPoint(x, z, rot, side * (2.25 + rng() * .35), front - .15);
   g.add(place(index % 3 ? 'cooler' : 'backpack', bx, bz, rot + (rng() - .5) * .25));
   const [tx, tz] = localPoint(x, z, rot, -side * 2.2, front - .3);
@@ -79,6 +91,10 @@ function decorateCabin(g: THREE.Group, x: number, z: number, rot: number, index:
 }
 
 function decorateLandmark(g: THREE.Group, kind: string, x: number, z: number, rot: number): void {
+  // Every enterable landmark gets practical interior light rather than relying on the sky/hemisphere.
+  const interiorIntensity = kind === 'dining' ? 330 : kind === 'kitchen' ? 265 : 220;
+  g.add(warmLight(x, 2.45, z, interiorIntensity, kind === 'dining' ? 15 : 11.5, '#ffd69b'));
+
   if (kind === 'dining') {
     for (const [lx, lz] of [[-4.2, -1.8], [0, -1.8], [4.2, -1.8], [-4.2, 1.8], [0, 1.8], [4.2, 1.8]] as [number, number][]) {
       const [px, pz] = localPoint(x, z, rot, lx, lz); g.add(furnishedTable(px, pz, rot, false));
@@ -113,10 +129,6 @@ function addStorageYard(g: THREE.Group, cx: number, cz: number, seed: number): v
   });
 }
 
-/**
- * Lived-in organization pass. All visible furniture/props here are imported GLBs;
- * the only generated geometry left in this module is light itself.
- */
 export function buildCampDecor(layout: Layout): THREE.Group {
   const g = new THREE.Group();
   g.name = 'camp-decor-imported';
@@ -127,12 +139,9 @@ export function buildCampDecor(layout: Layout): THREE.Group {
   for (const [x, z] of [[0, 6], [-55, 26], [50, 27], [-7, 58]] as [number, number][]) g.add(litCampfire(x, z));
   for (const [x, z, r] of [[-9, 8, .15], [8, 8, -.2], [-9, 57, .25], [4, 58, -.25], [80, -10, .4]] as [number, number, number][]) g.add(furnishedTable(x, z, r, true));
 
-  // Maintenance and waterfront get structured yards using a vendored MIT Poisson sampler,
-  // so objects feel naturally spaced instead of uniformly random or piled at world origin.
   addStorageYard(g, -101, -42, 0xA11CE);
   addStorageYard(g, 97, -29, 0xB00B5);
 
-  // A few intentional activity props at the lake.
   g.add(place('paddle', 82.8, -6.2, .15));
   g.add(place('paddle', 83.6, -5.4, -.2));
   g.add(place('cooler', 80.7, -7.0, .05));
