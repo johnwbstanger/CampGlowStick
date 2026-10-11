@@ -8,6 +8,7 @@ import type { Layout } from './layout';
 import { newMonster, stepMonster } from './monster';
 import { NoiseBus, VOLUME, impactVolume, stepVolume, type Noise, type NoiseSource } from './noise';
 import { terrainHeight } from './terrain';
+import { flatForward, heldPose as viewHeldPose, releaseVelocity } from './viewPhysics';
 import { setDoorOpen, type DoorView } from './world';
 
 interface SimPlayer { state: PlayerState; alive: boolean; stepT: number }
@@ -34,7 +35,7 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /** Host-authoritative simulation: props, campers, doors, noise, monster AI, rescue and extraction. */
 export class HostSim {
-  world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.8, 0) });
+  world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.81, 0) });
   items = new Map<number, SimItem>();
   players = new Map<number, SimPlayer>();
   campers = new Map<number, SimCamper>();
@@ -62,10 +63,22 @@ export class HostSim {
     this.monster = newMonster(layout.monsterStart[0], layout.monsterStart[1]);
     this.world.broadphase = new CANNON.SAPBroadphase(this.world);
     this.world.allowSleep = true;
-    const mat = new CANNON.Material('prop');
-    this.world.defaultContactMaterial = new CANNON.ContactMaterial(mat, mat, { friction: 0.64, restitution: 0.18 });
+    this.world.defaultContactMaterial.friction = 0.62;
+    this.world.defaultContactMaterial.restitution = 0.12;
+    this.world.defaultContactMaterial.contactEquationStiffness = 1e7;
+    this.world.defaultContactMaterial.contactEquationRelaxation = 4;
+
+    // The playable camp is intentionally flat. Let the physics engine own the floor contact instead
+    // of teleporting props upward after every step; this is what makes stacks, tipping and rolling coherent.
+    const ground = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
+    ground.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+    ground.position.y = 0;
+    this.world.addBody(ground);
+
+    // Safety catch is far below gameplay and should never participate during a healthy simulation.
     const catchPlane = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
-    catchPlane.quaternion.setFromEuler(-Math.PI / 2, 0, 0); catchPlane.position.y = -7; this.world.addBody(catchPlane);
+    catchPlane.quaternion.setFromEuler(-Math.PI / 2, 0, 0); catchPlane.position.y = -20; this.world.addBody(catchPlane);
+
     for (const b of colliders) {
       const body = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Box(new CANNON.Vec3((b.maxX - b.minX) / 2, (b.maxY - b.minY) / 2, (b.maxZ - b.minZ) / 2)) });
       body.position.set((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, (b.minZ + b.maxZ) / 2); this.world.addBody(body);
@@ -105,17 +118,17 @@ export class HostSim {
     const body = new CANNON.Body({
       mass,
       shape: new CANNON.Box(new CANNON.Vec3(halfX, halfY, halfZ)),
-      linearDamping: 0.15,
-      angularDamping: 0.23,
-      sleepSpeedLimit: 0.12,
-      sleepTimeLimit: 0.7,
+      linearDamping: 0.09,
+      angularDamping: 0.14,
+      sleepSpeedLimit: 0.08,
+      sleepTimeLimit: 0.8,
     });
     body.position.set(x, y, z);
     body.quaternion.setFromEuler((Math.random() - .5) * .08, Math.random() * Math.PI * 2, (Math.random() - .5) * .08);
     const it: SimItem = { def, body, mass, holder: -1, lastHit: 0, halfX, halfY, halfZ, thrownAt: -Infinity };
     body.addEventListener('collide', (e: { contact: CANNON.ContactEquation }) => {
       const v = Math.abs(e.contact.getImpactVelocityAlongNormal());
-      if (v < 1.4 || this.time - it.lastHit < 0.3) return;
+      if (v < 1.2 || this.time - it.lastHit < 0.24) return;
       it.lastHit = this.time;
       const recentlyThrown = this.time - it.thrownAt < 3;
       const source: NoiseSource = recentlyThrown ? 'thrown-impact' : 'impact';
@@ -160,7 +173,7 @@ export class HostSim {
     this.noise(door.x, door.z, 1.25, 'wood', 'interaction');
   }
 
-  private forward(pl: SimPlayer): [number, number] { return [-Math.sin(pl.state.yaw), -Math.cos(pl.state.yaw)]; }
+  private forward(pl: SimPlayer): [number, number] { return flatForward(pl.state.yaw); }
 
   private fire(pl: SimPlayer): void {
     const it = pl.state.held >= 0 ? this.items.get(pl.state.held) : undefined;
@@ -211,14 +224,16 @@ export class HostSim {
     const pl = this.players.get(id); if (!pl || pl.state.held < 0) return;
     const it = this.items.get(pl.state.held); pl.state.held = -1; if (!it) return;
     it.holder = -1; it.body.type = CANNON.Body.DYNAMIC; it.body.mass = it.mass; it.body.updateMassProperties(); it.body.wakeUp();
-    const [fx, fz] = this.forward(pl), charge = Math.max(0, Math.min(1, force)), sp = thrown ? 7 + charge * 10 : 1.0;
-    it.body.velocity.set(fx * sp, thrown ? 2.2 + charge * 4.2 : 0.35, fz * sp);
+    const [vx, vy, vz] = releaseVelocity(pl.state.yaw, pl.state.pitch, force, it.mass, thrown);
+    it.body.velocity.set(vx, vy, vz);
     if (thrown) {
       it.thrownAt = this.time;
-      it.body.angularVelocity.set(Math.random() * 7 - 3.5, Math.random() * 7 - 3.5, Math.random() * 7 - 3.5);
+      // Spin follows release energy, but no random teleport/settling corrections are applied after release.
+      const spin = 2.5 + Math.max(0, Math.min(1, force)) * 5.5;
+      it.body.angularVelocity.set((Math.random() - .5) * spin, (Math.random() - .5) * spin, (Math.random() - .5) * spin);
       this.noise(pl.state.p[0], pl.state.p[2], VOLUME.throw * 0.35, 'step', 'step');
     } else {
-      it.body.angularVelocity.set((Math.random() - .5) * .7, (Math.random() - .5) * .4, (Math.random() - .5) * .7);
+      it.body.angularVelocity.set((Math.random() - .5) * .25, (Math.random() - .5) * .2, (Math.random() - .5) * .25);
     }
   }
 
@@ -286,24 +301,17 @@ export class HostSim {
   }
 
   private heldPose(pl: SimPlayer, it: SimItem): void {
-    const s = pl.state, [fx, fz] = this.forward(pl), rx = -fz, rz = fx;
+    const s = pl.state;
     const eye = s.crouch ? PLAYER.crouchEye : PLAYER.eye;
     const isGun = it.def.model === 'directorGun';
-    const forward = isGun ? .72 : .66;
-    const right = isGun ? .23 : .08;
-    const down = isGun ? .28 : .38;
-    it.body.position.set(s.p[0] + fx * forward + rx * right, s.p[1] + eye - down, s.p[2] + fz * forward + rz * right);
-    it.body.quaternion.setFromEuler(-s.pitch, s.yaw, 0, 'YXZ');
+    const pose = viewHeldPose(s, eye, {
+      forward: isGun ? .64 : .58,
+      right: isGun ? .20 : .08,
+      down: isGun ? .34 : .43,
+    });
+    it.body.position.set(...pose.position);
+    it.body.quaternion.setFromEuler(pose.euler[0], pose.euler[1], pose.euler[2], 'YXZ');
     it.body.velocity.setZero(); it.body.angularVelocity.setZero();
-  }
-
-  /** World-space vertical support radius of an oriented box. */
-  private supportY(it: SimItem): number {
-    const q = it.body.quaternion, x = q.x, y = q.y, z = q.z, w = q.w;
-    const r10 = 2 * (x * y + z * w);
-    const r11 = 1 - 2 * (x * x + z * z);
-    const r12 = 2 * (y * z - x * w);
-    return Math.abs(r10) * it.halfX + Math.abs(r11) * it.halfY + Math.abs(r12) * it.halfZ;
   }
 
   step(dt: number): void {
@@ -318,20 +326,9 @@ export class HostSim {
     }
     this.stepCampers(dt);
 
-    this.world.step(1 / 60, dt, 3);
-    for (const it of this.items.values()) {
-      if (it.holder >= 0) continue;
-      const floorY = terrainHeight(it.body.position.x, it.body.position.z, this.layout) + this.supportY(it);
-      if (it.body.position.y < floorY && it.body.velocity.y <= 0) {
-        it.body.position.y = floorY;
-        it.body.velocity.y = Math.max(0, -it.body.velocity.y * 0.09);
-        it.body.velocity.x *= 0.88; it.body.velocity.z *= 0.88;
-        it.body.angularVelocity.x *= 0.91; it.body.angularVelocity.y *= 0.91; it.body.angularVelocity.z *= 0.91;
-        const linear = Math.abs(it.body.velocity.x) + Math.abs(it.body.velocity.y) + Math.abs(it.body.velocity.z);
-        const angular = Math.abs(it.body.angularVelocity.x) + Math.abs(it.body.angularVelocity.y) + Math.abs(it.body.angularVelocity.z);
-        if (linear < 0.06 && angular < 0.08) it.body.sleep();
-      }
-    }
+    // Fixed-step rigid body integration: ground, props and thrown objects now resolve through the
+    // engine's contact solver instead of the old per-item Y clamp that made everything look scripted.
+    this.world.step(1 / 60, Math.min(dt, 0.05), 4);
     this.bus.prune(this.time);
 
     const ex = this.layout.extraction;
