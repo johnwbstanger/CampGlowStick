@@ -1,36 +1,55 @@
+// Ported from johnwbstanger/Camp_Snallygaster/shared/GameHost.ts.
+// Keep the original formation constants/slot math so Camp Glowstick uses the proven Snallygaster escort feel.
+// Collision/nav is applied by HostSim after this target is calculated.
+
+export const SNALLY_FOLLOW_DISTANCE = 2.25;
+export const SNALLY_FOLLOW_SPEED = 3.4;
+export const SNALLY_BOARD_DISTANCE = 5.5;
+
 export interface FollowPlan {
-  radius: number;
-  angle: number;
+  targetX: number;
+  targetZ: number;
   speed: number;
   stopRadius: number;
 }
 
 /**
- * A compact escort formation tuned for first-person co-op: campers stay visibly near the counselor
- * without stacking into the camera or stretching into a long conga line.
+ * Exact Snallygaster-style rear formation: three campers per rank, with successive ranks 0.7m farther back.
+ * The original GameHost chooses speed from target error (d * 3.2), capped at 3.4m/s.
  */
-export function followerPlan(slot: number, followerCount: number, distanceToPlayer: number, playerSprint: boolean, playerMoving: boolean): FollowPlan {
-  const row = Math.floor(slot / 3);
-  const col = slot % 3;
-  const rowCount = Math.min(3, Math.max(1, followerCount - row * 3));
-  const centered = col - (rowCount - 1) / 2;
-  const radius = 1.65 + row * 0.55;
-  const angle = Math.PI + centered * 0.38;
+export function snallyFollowerPlan(
+  camperIndex: number,
+  playerX: number,
+  playerZ: number,
+  playerYaw: number,
+  camperX: number,
+  camperZ: number,
+  playerSprint = false,
+): FollowPlan {
+  const angle = (camperIndex % 3 - 1) * 0.34;
+  const ring = Math.floor(camperIndex / 3);
+  const radius = SNALLY_FOLLOW_DISTANCE + ring * 0.7;
+  const rearYaw = playerYaw + Math.PI + angle;
+  const targetX = playerX - Math.sin(rearYaw) * radius;
+  const targetZ = playerZ - Math.cos(rearYaw) * radius;
+  const d = Math.hypot(targetX - camperX, targetZ - camperZ);
 
-  const base = !playerMoving ? 2.6 : playerSprint ? 8.0 : 5.0;
-  const catchup = distanceToPlayer > 6 ? 9.2 : distanceToPlayer > 4 ? 7.0 : base;
-  return { radius, angle, speed: catchup, stopRadius: 0.34 };
+  // Preserve the original Snallygaster cap, but allow a counselor sprint to pull the group without
+  // permanently losing campers. Normal walking behavior remains the original implementation.
+  const cap = playerSprint ? 5.7 : SNALLY_FOLLOW_SPEED;
+  return { targetX, targetZ, speed: Math.min(cap, d * 3.2), stopRadius: 0.08 };
 }
 
+/** Smooth velocity change around the proven target, avoiding frame-dependent position snapping. */
 export function steeringVelocity(dx: number, dz: number, maxSpeed: number, currentVx: number, currentVz: number, dt: number): [number, number] {
   const d = Math.hypot(dx, dz);
-  if (d < 1e-5) {
-    const k = Math.min(1, dt * 8);
+  if (d < 1e-5 || maxSpeed <= 0) {
+    const k = Math.min(1, dt * 10);
     return [currentVx * (1 - k), currentVz * (1 - k)];
   }
   const desiredVx = dx / d * maxSpeed;
   const desiredVz = dz / d * maxSpeed;
-  const responsiveness = Math.min(1, dt * 7.5);
+  const responsiveness = Math.min(1, dt * 8);
   return [
     currentVx + (desiredVx - currentVx) * responsiveness,
     currentVz + (desiredVz - currentVz) * responsiveness,
