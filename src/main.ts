@@ -1,4 +1,5 @@
 import './ui/style.css';
+import './game/camperPresentationFix';
 import { click } from './audio/synth';
 import { Voice } from './audio/voice';
 import type { Game } from './game/game';
