@@ -1,27 +1,27 @@
-// Logical name -> imported model (relative to public/assets/). `h` / `w` normalise the model to metres
-// (height, or largest horizontal extent) because the source packs use wildly different scales.
+// Logical name -> imported model (relative to public/assets/). `h` / `w` normalise the model to metres.
 export interface AssetDef { file: string; h?: number; w?: number; format?: 'glb' | 'fbx' }
 
 const k = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/${file}.glb`, format: 'glb', ...fit });
 const q = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/quaternius/${file}.fbx`, format: 'fbx', ...fit });
+const cg = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/quaternius/camp-characters/${file}.gltf`, format: 'glb', ...fit });
 const oa = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/openagents/${file}.glb`, format: 'glb', ...fit });
+const cc0 = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/cc0-camp-props/${file}.glb`, format: 'glb', ...fit });
 const CHARS = 'abcdefgh'.split('');
 
 export const MANIFEST = {
   ...Object.fromEntries(CHARS.map((c, i) => [`camper${i + 1}`, k(`blocky-characters/character-${c}`, { h: 1.7 })])),
 
-  // Smooth Quaternius humans are the production character family. The same authored meshes are
-  // normalised to different heights so campers read as children and counselors as adults.
   camperMale: q('Smooth_Male_Casual', { h: 1.28 }),
   camperFemale: q('Smooth_Female_Casual', { h: 1.24 }),
   counselorMale: q('Smooth_Male_Shirt', { h: 1.82 }),
   counselorFemale: q('Smooth_Female_Casual', { h: 1.74 }),
+  counselorMaleCasual: cg('male_casual2', { h: 1.82 }),
+  counselorMaleBeach: cg('male_beach', { h: 1.78 }),
+  counselorFemaleCasual: cg('female_casual', { h: 1.72 }),
+  camperMaleVariant: cg('male_farmer', { h: 1.30 }),
+  camperFemaleVariant: cg('female_adventurer', { h: 1.27 }),
 
   monster: k('graveyard/character-zombie', { h: 2.2 }),
-
-  // CC0 generated camp structures from OpenAgents/Quaternius replace suburban House1/House2 art.
-  // The log cabin is explicitly one storey and only ~1k triangles, which is a better fit for the
-  // real bunkhouse references and for iPad draw/triangle budgets.
   cabin: oa('log_cabin', { w: 8.0 }),
   shed: oa('woodshed', { w: 5.0 }),
   boathouse: oa('boathouse', { w: 8.0 }),
@@ -35,9 +35,9 @@ export const MANIFEST = {
   bookshelf: k('furniture/bookcaseOpen', { h: 1.9 }),
   sink: k('furniture/bathroomSink', { w: 1.1 }),
   teddy: k('furniture/bear', { h: 0.42 }),
-  cooler: k('survival/box-large', { w: 0.7 }),
+  cooler: cc0('cooler', { w: 0.72 }),
   crate: k('survival/box', { w: 0.55 }),
-  backpack: k('survival/bedroll-packed', { w: 0.6 }),
+  backpack: cc0('backpack', { h: 0.58 }),
   lantern: k('holiday/lantern', { h: 0.5 }),
   tent: k('nature/tent_detailedClosed', { w: 3.2 }),
   tree: k('nature/tree_pineTallA', { h: 7 }),
@@ -67,7 +67,9 @@ export type AssetName = keyof typeof MANIFEST;
 export const ALWAYS_PRELOAD: AssetName[] = [
   'table', 'chair', 'bookshelf', 'bedSingle', 'sink', 'teddy',
   'lantern', 'campfire', 'logs', 'crate', 'cooler', 'radio', 'mug', 'can', 'backpack', 'bucket', 'barrel', 'paddle',
-  'camperMale', 'camperFemale', 'counselorMale', 'counselorFemale', 'cabin', 'shed', 'boathouse', 'trailShelter', 'lodge', 'groundBrush',
+  'camperMale', 'camperFemale', 'counselorMale', 'counselorFemale',
+  'counselorMaleCasual', 'counselorMaleBeach', 'counselorFemaleCasual', 'camperMaleVariant', 'camperFemaleVariant',
+  'cabin', 'shed', 'boathouse', 'trailShelter', 'lodge', 'groundBrush',
 ];
 export const HDRI_FILE = 'hdri/venice_sunset_1k.hdr';
 export const camperName = (i: number): AssetName => `camper${(i % CHARS.length) + 1}` as AssetName;

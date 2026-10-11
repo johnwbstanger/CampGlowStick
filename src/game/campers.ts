@@ -23,7 +23,7 @@ export interface Camper {
 
 export const CAMPERS: CamperSpec[] = [
   { id: 'sunshine', name: 'Randy “Sunshine”', blurb: 'Acts brave until the woods answer back.' },
-  { id: 'top-bunk', name: 'Tammy “Top Bunk”', blurb: 'Claims the top bunk before anyone else.' , female: true },
+  { id: 'top-bunk', name: 'Tammy “Top Bunk”', blurb: 'Claims the top bunk before anyone else.', female: true },
   { id: 'bunk-rat', name: 'Mikey “Bunk Rat”', blurb: 'Knows every hiding place in camp.' },
   { id: 'carrot', name: 'Kevin “Carrot”', blurb: 'Always carrying contraband snacks.' },
   { id: 'tube-socks', name: 'Jenny “Tube Socks”', blurb: 'Fast, loud, and impossible to miss.', female: true },
@@ -40,9 +40,21 @@ export const COUNSELORS: CamperSpec[] = [
   { id: 'tess', name: 'Tess', blurb: 'Activities counselor.', adult: true, female: true },
 ];
 
+const hash = (s: string) => [...s].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619), 2166136261) >>> 0;
+const CAMP_COLORS = ['#E3B447', '#2E6B68', '#C15C3D', '#6F7951', '#D8C9A0', '#496E83'];
+
 const assetFor = (spec: CamperSpec): AssetName => {
-  if (spec.adult) return spec.female ? 'counselorFemale' : 'counselorMale';
-  return spec.female ? 'camperFemale' : 'camperMale';
+  const h = hash(spec.id);
+  if (spec.adult) {
+    const male: AssetName[] = ['counselorMale', 'counselorMaleCasual', 'counselorMaleBeach'];
+    const female: AssetName[] = ['counselorFemale', 'counselorFemaleCasual'];
+    const pool = spec.female ? female : male;
+    return pool[h % pool.length];
+  }
+  const male: AssetName[] = ['camperMale', 'camperMaleVariant'];
+  const female: AssetName[] = ['camperFemale', 'camperFemaleVariant'];
+  const pool = spec.female ? female : male;
+  return pool[h % pool.length];
 };
 
 const clipWords = (pose: Pose): string[] => {
@@ -56,18 +68,34 @@ const clipWords = (pose: Pose): string[] => {
 function actionFor(camper: Camper, pose: Pose): THREE.AnimationAction | undefined {
   const words = clipWords(pose);
   for (const [name, action] of camper.actions) if (words.some((w) => name.includes(w))) return action;
-  // Some source FBXs contain a single generic take. Use it rather than dropping the rig entirely.
   return camper.actions.values().next().value;
 }
 
-/**
- * Production character builder backed by preloaded CC0 Quaternius skinned FBX assets.
- * This deliberately replaces the old runtime SDF/surface-net polygonizer: geometry/materials are
- * loaded once, cloned with SkeletonUtils by the asset loader, and shared across all seven campers.
- */
+function tintCampUniform(model: THREE.Object3D, spec: CamperSpec): void {
+  const tint = new THREE.Color(CAMP_COLORS[hash(spec.id) % CAMP_COLORS.length]);
+  let i = 0;
+  model.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) return;
+    const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const mapped = list.map((mat) => {
+      const cloned = mat.clone();
+      if ((cloned as THREE.MeshStandardMaterial).isMeshStandardMaterial) {
+        const sm = cloned as THREE.MeshStandardMaterial;
+        if ((i++ % 3) === 0) sm.color.lerp(tint, spec.adult ? .28 : .22);
+        sm.roughness = Math.max(.78, sm.roughness ?? .85);
+        sm.metalness = Math.min(.04, sm.metalness ?? 0);
+      }
+      return cloned;
+    });
+    mesh.material = Array.isArray(mesh.material) ? mapped : mapped[0];
+  });
+}
+
 export function buildCamper(spec: CamperSpec): Camper {
   const asset = assetFor(spec);
   const model = getModel(asset);
+  tintCampUniform(model, spec);
   const root = new THREE.Group();
   root.name = spec.adult ? `counselor:${spec.id}` : `camper:${spec.id}`;
   model.name = `${asset}:${spec.id}`;
@@ -76,8 +104,7 @@ export function buildCamper(spec: CamperSpec): Camper {
   const actions = new Map<string, THREE.AnimationAction>();
   for (const clip of getAnimations(asset)) actions.set(clip.name.toLowerCase(), mixer.clipAction(clip));
   const camper: Camper = { root, model, mixer, actions, current: 'idle', spec };
-  const idle = actionFor(camper, 'idle');
-  idle?.play();
+  actionFor(camper, 'idle')?.play();
   return camper;
 }
 
@@ -91,10 +118,7 @@ export function poseCamper(camper: Camper, pose: Pose, t: number): void {
     camper.current = pose;
   }
   camper.mixer.update(1 / 60);
-  if (!camper.actions.size) {
-    // Cheap fallback motion only. No runtime mesh generation/deformation.
-    camper.model.position.y = pose === 'idle' ? Math.sin(t * 1.8) * .006 : 0;
-  }
+  if (!camper.actions.size) camper.model.position.y = pose === 'idle' ? Math.sin(t * 1.8) * .006 : 0;
 }
 
 export class CamperActor {
@@ -110,8 +134,6 @@ export class CamperActor {
 
   update(dt: number, moving: boolean, scared = false, hiding = false): void {
     this.t += dt;
-    // Default undiscovered state is neutral, arms-down. Cover-specific anchors can opt into hide
-    // later; being undiscovered by itself is not an animation instruction.
     const pose: Pose = hiding ? 'idle' : moving ? (scared ? 'run' : 'walk') : scared ? 'scared' : 'idle';
     poseCamper(this.camper, pose, this.t);
     this.camper.mixer.update(Math.max(0, dt - 1 / 60));

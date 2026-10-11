@@ -1,15 +1,18 @@
 import type { AssetName } from '../assets/manifest';
 import { PoissonDiskSampling2D } from '../vendor/poissonDiskSampling';
 import { pickGraffiti } from './graffiti';
+import { CABINS, CAMP_CLEARINGS, CAMP_PLAN, CAMP_ROADS } from './campPlan';
 import { WORLD_HALF } from './constants';
+import { terrainSlope } from './terrain';
 
-export interface Placed { name: AssetName; x: number; z: number; rot: number; solid: boolean }
+export interface Placed { name: AssetName; x: number; z: number; rot: number; solid: boolean; scale?: number }
 export interface Decal { host: number; side: number; text: string; creepy: boolean }
 export interface ItemSpawn { model: AssetName; kind: 'prop' | 'loot'; x: number; z: number }
-export interface Road { points: [number, number][]; width: number }
-export interface Clearing { x: number; z: number; rx: number; rz: number }
+export interface Road { points: [number, number][]; width: number; kind?: 'gravel' | 'dirt' | 'foot' }
+export interface Clearing { x: number; z: number; rx: number; rz: number; kind?: string }
 export interface WaterArea { x: number; z: number; rx: number; rz: number; y: number }
 export interface Layout {
+  seed: number;
   statics: Placed[]; trees: Placed[]; decals: Decal[]; items: ItemSpawn[]; spawns: [number, number][];
   roads: Road[]; clearings: Clearing[]; water: WaterArea;
   extraction: { x: number; z: number; r: number }; monsterStart: [number, number]; need: number;
@@ -23,15 +26,7 @@ export function mulberry32(seed: number): () => number {
 const samplePoisson = (width: number, height: number, minDistance: number, maxDistance: number, tries: number, rng: () => number): [number, number][] =>
   new PoissonDiskSampling2D({ shape: [width, height], minDistance, maxDistance, tries }, rng).fill();
 
-// Blueprint-grounded sleeping clusters: cabins flank loop roads and face the shared camp core rather
-// than being independently scattered. The visual asset is a one-storey CC0 log cabin.
-const CABINS: [number, number][] = [
-  [-82, -46], [-64, -56], [-43, -61], [-20, -57],
-  [21, -59], [45, -56], [68, -44],
-  [-88, 12], [-68, 24], [-46, 31], [-23, 35],
-  [18, 36], [43, 31], [67, 22], [86, 8],
-];
-const faceCentre = (x: number, z: number): number => Math.atan2(-x, -z);
+const face = (x: number, z: number, tx = 0, tz = 72): number => Math.atan2(tx - x, tz - z);
 const localToWorld = (cx: number, cz: number, rot: number, lx: number, lz: number): [number, number] => {
   const c = Math.cos(rot), s = Math.sin(rot);
   return [cx + lx * c + lz * s, cz - lx * s + lz * c];
@@ -43,47 +38,24 @@ const distToSegment = (px: number, pz: number, ax: number, az: number, bx: numbe
   return Math.hypot(px - (ax + t * dx), pz - (az + t * dz));
 };
 
-/** Deterministic campground master plan. Infrastructure is placed before props and vegetation. */
+/** Complete authored camp geography; randomization is reserved for dressing and forest variation. */
 export function buildLayout(seed: number, need = 3): Layout {
   const rng = mulberry32(seed);
-  const water: WaterArea = { x: 103, z: -4, rx: 23, rz: 18, y: -1.15 };
-  const roads: Road[] = [
-    { width: 7.5, points: [[-120, 68], [-98, 52], [-75, 38], [-52, 24], [-27, 13], [0, 6], [28, 2], [55, 10], [82, 20], [108, 32]] },
-    { width: 6.0, points: [[-75, 38], [-86, 10], [-82, -18], [-72, -42], [-45, -64], [-15, -72], [18, -71], [51, -60], [75, -40], [82, -8], [82, 20]] },
-    { width: 5.2, points: [[-52, 24], [-46, 31], [-68, 24], [-88, 12]] },
-    { width: 5.0, points: [[-27, 13], [-23, 35], [-46, 31]] },
-    { width: 5.0, points: [[0, 6], [18, 36], [43, 31], [67, 22], [86, 8]] },
-    { width: 4.8, points: [[-72, -42], [-64, -56], [-82, -46]] },
-    { width: 4.8, points: [[-45, -64], [-43, -61], [-20, -57]] },
-    { width: 4.8, points: [[18, -71], [21, -59], [45, -56], [68, -44]] },
-    { width: 4.2, points: [[0, 6], [-7, 56], [-23, 82], [-48, 94]] },
-    { width: 4.2, points: [[28, 2], [52, -10], [76, -13], [87, -6]] },
-  ];
-
-  const clearings: Clearing[] = [
-    { x: 0, z: 6, rx: 22, rz: 18 }, { x: -58, z: -52, rx: 40, rz: 24 },
-    { x: 46, z: -55, rx: 42, rz: 25 }, { x: -57, z: 25, rx: 43, rz: 23 },
-    { x: 52, z: 27, rx: 45, rz: 23 }, { x: -7, z: 57, rx: 22, rz: 17 },
-    { x: 83, z: -15, rx: 20, rz: 15 }, { x: -42, z: 89, rx: 24, rz: 18 },
-  ];
-
+  const water: WaterArea = { ...CAMP_PLAN.lake };
+  const roads: Road[] = CAMP_ROADS.map((r) => ({ width: r.width, kind: r.kind, points: r.points.map(([x, z]) => [x, z]) as [number, number][] }));
+  const clearings: Clearing[] = CAMP_CLEARINGS.map((c) => ({ ...c }));
   const statics: Placed[] = [];
-  const add = (name: AssetName, x: number, z: number, rot: number, solid = true) => statics.push({ name, x, z, rot, solid });
-  add('campfire', 0, 6, 0);
+  const add = (name: AssetName, x: number, z: number, rot = 0, solid = true, scale = 1) => statics.push({ name, x, z, rot, solid, scale });
 
-  // Building pass first.
-  CABINS.forEach(([x, z]) => add('cabin', x, z, faceCentre(x, z), false));
-  add('shed', -102, -42, 0.25, false);
-  add('shed', 97, -29, -0.4, false);
-  add('lodge', 15, 18, -0.2, false);
-  add('boathouse', 89, -4, Math.PI / 2, false);
-  add('trailShelter', -48, 94, -0.35, false);
-  add('bus', 31, 2, Math.PI / 2);
+  add('bus', CAMP_PLAN.bus.x, CAMP_PLAN.bus.z, CAMP_PLAN.bus.rot, true);
+  add('cabin', CAMP_PLAN.admin.x, CAMP_PLAN.admin.z, CAMP_PLAN.admin.rot, false);
+  add('trailShelter', 15, 121, -0.1, false);
+  add('sign', CAMP_PLAN.entrance.x - 4.5, CAMP_PLAN.entrance.z, 0, true, 1.35);
+  add('sign', CAMP_PLAN.entrance.x + 4.5, CAMP_PLAN.entrance.z, Math.PI, true, 1.35);
 
-  // Furniture pass second. These are interior room sockets transformed by each cabin's rotation,
-  // not arbitrary offsets around the exterior. Bunks are therefore spatial children of cabins.
   CABINS.forEach(([x, z], i) => {
-    const rot = faceCentre(x, z);
+    const rot = face(x, z) + (rng() - 0.5) * 0.22;
+    add('cabin', x, z, rot, false, 0.94 + rng() * 0.10);
     const bunkSockets: [number, number, number][] = [
       [-2.35, -1.35, Math.PI / 2], [2.35, -1.35, -Math.PI / 2],
       [-2.35, 1.10, Math.PI / 2], [2.35, 1.10, -Math.PI / 2],
@@ -92,90 +64,113 @@ export function buildLayout(seed: number, need = 3): Layout {
       const [bx, bz] = localToWorld(x, z, rot, lx, lz);
       add('bunk', bx, bz, rot + lr, true);
     }
-    const [sx, sz] = localToWorld(x, z, rot, 0, -2.45);
+    const [sx, sz] = localToWorld(x, z, rot, 0, -2.15);
     add('bookshelf', sx, sz, rot, true);
-    if (i % 3 === 0) {
-      const [tx, tz] = localToWorld(x, z, rot, 0, .1);
+    if (i % 2 === 0) {
+      const [tx, tz] = localToWorld(x, z, rot, 0, 0.1);
       add('table', tx, tz, rot, true);
+    }
+    if (i % 3 === 1) {
+      const [lx, lz] = localToWorld(x, z, rot, -3.6, 2.6);
+      add('logs', lx, lz, rot + 0.3, true);
     }
   });
 
-  // Activity compounds are authored groups, not isolated tent scatter. Each cluster keeps a shared
-  // social center and a clear entrance facing the circulation network.
-  const tents: [number, number, number][] = [
-    [-17, 54, 0.4], [-5, 61, -0.3], [8, 56, 0.7], [15, 67, -0.8],
-    [-96, 72, 0.2], [-86, 78, -0.5], [-74, 70, 0.9],
-    [91, 57, -0.2], [101, 63, 0.5], [110, 55, -0.7],
-  ];
-  tents.forEach(([x, z, r]) => add('tent', x, z, r));
-  add('canoe', 84, -4, 0.2); add('canoe', 86, 0, 0.1); add('canoe', 88, 4, 0.35);
-  add('logs', 4, 11, 0.8); add('logs', -6, 2, 2.1); add('logs', -1, -2, 1.4);
-  add('boulder', -115, -2, 0.2); add('boulder', 115, 47, 0.4); add('boulder', -15, 112, 1.2);
-  add('rock', -107, -9, 1.0); add('rock', 92, 77, 2.0); add('rock', 36, 108, 0.7); add('rock', -79, 98, 1.8);
+  add('shed', CAMP_PLAN.maintenance.x, CAMP_PLAN.maintenance.z, CAMP_PLAN.maintenance.rot, false, 1.18);
+  add('boathouse', CAMP_PLAN.boathouse.x, CAMP_PLAN.boathouse.z, CAMP_PLAN.boathouse.rot, false, 1.18);
+  add('trailShelter', CAMP_PLAN.lookout.x, CAMP_PLAN.lookout.z, CAMP_PLAN.lookout.rot, false, 1.05);
+  add('campfire', CAMP_PLAN.campfire.x, CAMP_PLAN.campfire.z, 0, true, 1.15);
 
-  const signs: [number, number, number][] = [
-    [-100, 53, 0.3], [-73, 38, -0.2], [-50, 24, 0.1], [-28, 13, 0.2],
-    [26, 3, -0.1], [57, 10, -0.3], [82, 20, 0.2], [104, 31, -0.4],
-    [-44, -64, 0.1], [51, -60, -0.2], [-8, 55, 0.3], [79, -12, -0.4],
-  ];
-  signs.forEach(([x, z, r]) => add('sign', x, z, r));
+  for (let i = 0; i < 6; i++) add('canoe', -34 + i * 2.1, -129 + (i % 2) * 1.7, 0.12 + (i % 2) * 0.05, true, 0.96);
+  for (let i = 0; i < 6; i++) add('paddle', -37 + i * 1.15, -124.5, Math.PI / 2 + 0.08 * i, true);
+  add('logs', CAMP_PLAN.campfire.x + 6, CAMP_PLAN.campfire.z + 4, .8);
+  add('logs', CAMP_PLAN.campfire.x - 7, CAMP_PLAN.campfire.z + 2, 2.1);
 
-  const keepOut = statics.map((s) => [s.x, s.z, s.name] as const);
-  const nearRoad = (x: number, z: number): boolean => roads.some((road) => road.points.slice(1).some(([bx, bz], i) => {
-    const [ax, az] = road.points[i]; return distToSegment(x, z, ax, az, bx, bz) < road.width * 0.75 + 1.7;
-  }));
-  const inClearing = (x: number, z: number): boolean => clearings.some((c) => ((x - c.x) / c.rx) ** 2 + ((z - c.z) / c.rz) ** 2 < 1);
-  const inLake = (x: number, z: number): boolean => ((x - water.x) / (water.rx + 5)) ** 2 + ((z - water.z) / (water.rz + 5)) ** 2 < 1;
+  const tents: [number, number, number][] = [[26, -22, .4], [39, -15, -.25], [53, -23, .65], [122, -69, -.4], [133, -57, .5]];
+  tents.forEach(([x, z, r]) => add('tent', x, z, r, true));
 
-  // Vegetation is last. Upstream MIT Poisson sampling produces deterministic blue-noise forest
-  // spacing, while infrastructure and activity-zone exclusions always win over vegetation.
-  const trees: Placed[] = [];
-  const kinds: AssetName[] = ['tree', 'tree2', 'tree3'];
-  const extent = (WORLD_HALF - 4) * 2;
-  const forest = samplePoisson(extent, extent, 4.0, 7.2, 28, rng);
-  for (const [px, pz] of forest) {
-    if (trees.length >= 500) break;
-    const x = px - extent / 2, z = pz - extent / 2;
-    if (keepOut.some(([kx, kz, name]) => Math.hypot(kx - x, kz - z) < (name === 'cabin' ? 7 : name === 'tent' ? 4.2 : 3.8))) continue;
-    if (nearRoad(x, z) || inClearing(x, z) || inLake(x, z)) continue;
-    if (Math.hypot(x - 31, z - 2) < 13) continue;
-    trees.push({ name: kinds[Math.floor(rng() * kinds.length)], x, z, rot: rng() * Math.PI * 2, solid: true });
+  const rockSpots: [number, number, number][] = [[-147, 18, 1], [-143, -112, 2], [150, 35, .5], [146, -101, 1.4], [-66, -139, .3], [72, -143, 2.2]];
+  rockSpots.forEach(([x, z, r], i) => add(i % 2 ? 'rock' : 'boulder', x, z, r, true, 1.15 + (i % 3) * .18));
+  for (const road of roads) {
+    for (let i = 1; i < road.points.length - 1; i += Math.max(1, Math.floor(road.points.length / 4))) {
+      const [x, z] = road.points[i]; add('sign', x + 2.1, z + 1.5, rng() * Math.PI * 2, true, .92);
+    }
   }
 
+  const keepOut = statics.map((s) => [s.x, s.z, s.name] as const);
+  const nearRoad = (x: number, z: number, padding = 1.6): boolean => roads.some((road) => road.points.slice(1).some(([bx, bz], i) => {
+    const [ax, az] = road.points[i]; return distToSegment(x, z, ax, az, bx, bz) < road.width * 0.55 + padding;
+  }));
+  const inClearing = (x: number, z: number, margin = 0): boolean => clearings.some((c) => ((x - c.x) / (c.rx + margin)) ** 2 + ((z - c.z) / (c.rz + margin)) ** 2 < 1);
+  const inLake = (x: number, z: number): boolean => ((x - water.x) / (water.rx + 3)) ** 2 + ((z - water.z) / (water.rz + 3)) ** 2 < 1;
+
+  const trees: Placed[] = [];
+  const legacyKinds: AssetName[] = ['tree', 'tree2', 'tree3'];
+  const extent = (WORLD_HALF - 3) * 2;
+  const forest = samplePoisson(extent, extent, 3.8, 7.0, 30, rng);
+  for (const [px, pz] of forest) {
+    if (trees.length >= 980) break;
+    const x = px - extent / 2, z = pz - extent / 2;
+    if (Math.abs(x) > WORLD_HALF - 5 || Math.abs(z) > WORLD_HALF - 5) continue;
+    if (keepOut.some(([kx, kz, name]) => Math.hypot(kx - x, kz - z) < (name === 'cabin' ? 7.5 : name === 'bus' ? 12 : 4.2))) continue;
+    if (nearRoad(x, z) || inClearing(x, z, 1.5) || inLake(x, z)) continue;
+    if (terrainSlope(x, z) > 0.46) continue;
+    trees.push({ name: legacyKinds[Math.floor(rng() * legacyKinds.length)], x, z, rot: rng() * Math.PI * 2, solid: true, scale: 0.78 + rng() * 0.56 });
+  }
+
+  const cabinsInStatics = statics.map((s, i) => ({ s, i })).filter(({ s }) => s.name === 'cabin' && !(s.x === CAMP_PLAN.admin.x && s.z === CAMP_PLAN.admin.z));
   const decals: Decal[] = [];
-  CABINS.slice(0, 8).forEach((_, i) => { for (let side = 0; side < 2; side++) { const text = pickGraffiti(rng); decals.push({ host: i + 1, side, text, creepy: text.startsWith('I SAW') || text.startsWith('IT ') || text.startsWith('DON') }); } });
+  cabinsInStatics.slice(0, 8).forEach(({ i: host }) => {
+    for (let side = 0; side < 2; side++) {
+      const text = pickGraffiti(rng);
+      decals.push({ host, side, text, creepy: text.startsWith('I SAW') || text.startsWith('IT ') || text.startsWith('DON') });
+    }
+  });
 
   const items: ItemSpawn[] = [];
-  const lootModels: AssetName[] = ['lantern', 'radio', 'backpack', 'cooler', 'lantern', 'radio', 'backpack', 'cooler'];
-  const lootSpots: [number, number][] = CABINS.map(([x, z], i) => {
-    const rot = faceCentre(x, z); return localToWorld(x, z, rot, i % 2 ? 1.1 : -1.1, 2.75);
-  });
-  for (let i = 0; i < Math.max(need + 6, 9); i++) items.push({ model: lootModels[i % lootModels.length], kind: 'loot', x: lootSpots[i % lootSpots.length][0], z: lootSpots[i % lootSpots.length][1] });
+  const lootModels: AssetName[] = ['lantern', 'radio', 'backpack', 'cooler'];
+  const cabinStatics = statics.filter((s) => s.name === 'cabin' && !(s.x === CAMP_PLAN.admin.x && s.z === CAMP_PLAN.admin.z));
+  const lootSpots: [number, number][] = cabinStatics.map((c, i) => localToWorld(c.x, c.z, c.rot, i % 2 ? 1.15 : -1.15, 2.65));
+  for (let i = 0; i < Math.max(need + 8, 11); i++) {
+    const [x, z] = lootSpots[i % lootSpots.length];
+    items.push({ model: lootModels[i % lootModels.length], kind: 'loot', x, z });
+  }
 
-  const zone = (cx: number, cz: number, rx: number, rz: number, pool: AssetName[], count: number, minDistance = 1.4) => {
-    const pts = samplePoisson(rx * 2, rz * 2, minDistance, minDistance * 1.8, 24, rng);
+  const scatterZone = (cx: number, cz: number, rx: number, rz: number, pool: AssetName[], count: number, minDistance = 1.5) => {
+    const pts = samplePoisson(rx * 2, rz * 2, minDistance, minDistance * 1.9, 26, rng);
     let used = 0;
     for (const [px, pz] of pts) {
       const nx = (px - rx) / rx, nz = (pz - rz) / rz;
       if (nx * nx + nz * nz > 1) continue;
       const x = cx + px - rx, z = cz + pz - rz;
-      if (inLake(x, z)) continue;
-      if (keepOut.some(([kx, kz, name]) => Math.hypot(kx - x, kz - z) < (name === 'cabin' ? 5.0 : name === 'tent' ? 3.4 : 2.8))) continue;
+      if (inLake(x, z) || terrainSlope(x, z) > .5) continue;
+      if (keepOut.some(([kx, kz, name]) => Math.hypot(kx - x, kz - z) < (name === 'cabin' ? 5.3 : 3.0))) continue;
       items.push({ model: pool[Math.floor(rng() * pool.length)], kind: 'prop', x, z });
       if (++used >= count) break;
     }
   };
 
-  // Outdoor pools only. Private-bedroom clutter (socks etc.) is excluded from world scatter.
-  const campPool: AssetName[] = ['mug', 'bottle', 'can', 'lantern', 'radio', 'backpack', 'cooler', 'crate'];
-  const workPool: AssetName[] = ['crate', 'bucket', 'barrel', 'axe', 'bottle', 'can'];
-  const waterfrontPool: AssetName[] = ['paddle', 'bucket', 'bottle', 'crate', 'cooler', 'backpack', 'radio'];
-  zone(0, 6, 13, 9, campPool, 12, 1.7); zone(-101, -42, 10, 7, workPool, 10, 1.65);
-  zone(97, -29, 10, 7, workPool, 10, 1.65); zone(79, -3, 8, 10, waterfrontPool, 10, 1.55);
-  zone(-7, 58, 13, 9, campPool, 8, 1.7); zone(-86, 74, 12, 8, campPool, 8, 1.7);
-  zone(101, 60, 12, 8, campPool, 8, 1.7); zone(-46, 89, 11, 8, ['crate', 'cooler', 'backpack', 'radio', 'lantern', 'mug'], 7, 1.7);
-  zone(28, 2, 8, 5, ['crate', 'cooler', 'backpack', 'radio', 'lantern'], 6, 1.6);
+  const social: AssetName[] = ['mug', 'bottle', 'can', 'lantern', 'radio', 'backpack', 'cooler', 'crate'];
+  const work: AssetName[] = ['crate', 'bucket', 'barrel', 'axe', 'bottle', 'can'];
+  const waterfront: AssetName[] = ['paddle', 'bucket', 'bottle', 'crate', 'cooler', 'backpack'];
+  scatterZone(0, 108, 25, 20, social, 16);
+  scatterZone(-43, 19, 24, 19, social, 20);
+  scatterZone(108, 121, 24, 18, work, 24);
+  scatterZone(0, -130, 44, 17, waterfront, 18);
+  scatterZone(40, -35, 23, 18, social, 14);
 
-  const spawns: [number, number][] = Array.from({ length: 15 }, (_, i) => [22 + Math.cos((i / 15) * Math.PI * 2) * 5, 5 + Math.sin((i / 15) * Math.PI * 2) * 3]);
-  return { statics, trees, decals, items, spawns, roads, clearings, water, extraction: { x: 28, z: 2, r: 6.5 }, monsterStart: [-118, -104], need };
+  return {
+    seed,
+    statics,
+    trees,
+    decals,
+    items,
+    spawns: [[-4, 111], [3, 115], [7, 108], [-7, 104], [10, 113], [-10, 114], [5, 102], [-4, 100], [13, 106], [-13, 108], [8, 118], [-8, 119], [15, 112], [-15, 112], [0, 119]],
+    roads,
+    clearings,
+    water,
+    extraction: { ...CAMP_PLAN.extraction },
+    monsterStart: [CAMP_PLAN.monsterStart.x, CAMP_PLAN.monsterStart.z],
+    need,
+  };
 }
