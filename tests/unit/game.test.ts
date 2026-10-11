@@ -25,10 +25,12 @@ describe('noise + monster', () => {
     expect(bus.events.length).toBe(0);
   });
 
-  it('investigates the loudest noise and catches visible prey', () => {
+  it('listens, investigates the loudest noise, and catches visible prey', () => {
     const bus = new NoiseBus(), m = newMonster(0, 0);
     bus.emit({ x: 0, z: 8, vol: 8, mat: 'metal', t: 0, source: 'impact' });
-    for (let i = 0; i < 5; i++) stepMonster(m, 0.1, i * 0.1, bus, [], true);
+    stepMonster(m, 0.1, 0, bus, [], true);
+    expect(m.mode).toBe('listen');
+    for (let i = 1; i < 8; i++) stepMonster(m, 0.1, i * 0.1, bus, [], true);
     expect(m.mode).toBe('investigate');
     expect(m.z).toBeGreaterThan(0);
     const caught = stepMonster(m, 0.1, 2, bus, [{ id: 3, x: m.x, z: m.z + MONSTER.catchDist / 2, crouch: false, alive: true }], true);
