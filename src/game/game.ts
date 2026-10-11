@@ -23,6 +23,7 @@ import { buildLayout, type Layout } from './layout';
 import { Lighting } from './lighting';
 import { falloff } from './noise';
 import { LocalPlayer } from './player';
+import { detectRuntimeProfile, nextPixelRatio, type RuntimeProfile } from './runtimeProfile';
 import { terrainHeight } from './terrain';
 import { buildWorld, setDoorOpen, type DoorView, type World } from './world';
 
@@ -69,6 +70,8 @@ export class Game {
   private disposed = false;
   private timers: number[] = [];
   private mouseDownAt = 0;
+  private perf: RuntimeProfile;
+  private pixelRatio = 1;
 
   static async create(root: HTMLElement, net: Session, start: StartMsg, progress: (d: number, t: number) => void, onRestart?: (msg: StartMsg) => void): Promise<Game> {
     const layout = buildLayout(start.seed, start.need);
@@ -77,8 +80,10 @@ export class Game {
   }
 
   private constructor(root: HTMLElement, private net: Session, private layout: Layout, private onRestart?: (msg: StartMsg) => void) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+    this.perf = detectRuntimeProfile();
+    this.pixelRatio = Math.min(devicePixelRatio, this.perf.maxPixelRatio);
+    this.renderer = new THREE.WebGLRenderer({ antialias: this.perf.antialias, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.domElement.className = 'game';
     this.light = new Lighting(this.scene, this.renderer, this.camera);
@@ -308,7 +313,16 @@ export class Game {
   private frame(): void {
     const now = performance.now(), dt = Math.min(0.1, (now - this.last) / 1000); this.last = now; this.frames++;
     this.fpsT += dt; this.fpsN++;
-    if (this.fpsT >= 0.5) { this.fps = Math.round(this.fpsN / this.fpsT); this.fpsT = this.fpsN = 0; }
+    if (this.fpsT >= 0.75) {
+      this.fps = Math.round(this.fpsN / this.fpsT);
+      const next = nextPixelRatio(this.pixelRatio, this.fps, this.perf);
+      if (Math.abs(next - this.pixelRatio) >= 0.035) {
+        this.pixelRatio = next;
+        this.renderer.setPixelRatio(this.pixelRatio);
+        this.resize();
+      }
+      this.fpsT = this.fpsN = 0;
+    }
     const held = this.held(); this.local.update(dt, this.world.colliders); this.light.update(dt, this.local.flash && this.local.alive);
     const k = damp(20, dt);
     for (const v of this.items.values()) { v.obj.position.lerp(v.target, k); v.obj.quaternion.slerp(v.q, k); }
@@ -337,6 +351,7 @@ export class Game {
       teleport: (x: number, z: number) => this.local.teleport(x, z), look: (yaw: number) => { this.local.yaw = yaw; },
       act: (a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire' | 'door', force?: number, target?: string) => this.act(a, force, target), setGlow: (c: string) => { this.glow = c; },
       local: () => ({ x: this.local.pos.x, y: this.local.pos.y, z: this.local.pos.z }),
+      runtime: () => ({ fps: this.fps, pixelRatio: this.pixelRatio, touchLike: this.perf.touchLike }),
       remote: (id: number) => { const r = this.remotes.get(id); return r ? { x: r.pos.x, z: r.pos.z, tx: r.target?.p[0], tz: r.target?.p[2] } : null; }, remoteIds: () => [...this.remotes.keys()],
       campers: () => this.snap?.campers ?? [],
       doors: () => [...this.world.doors.values()].map((d) => ({ id: d.id, open: d.open, x: d.x, z: d.z })),
