@@ -7,37 +7,53 @@ export const SNALLY_FOLLOW_SPEED = 3.4;
 export const SNALLY_BOARD_DISTANCE = 5.5;
 
 export interface FollowPlan {
-  targetX: number;
-  targetZ: number;
+  radius: number;
+  angle: number;
   speed: number;
   stopRadius: number;
 }
 
 /**
- * Exact Snallygaster-style rear formation: three campers per rank, with successive ranks 0.7m farther back.
- * The original GameHost chooses speed from target error (d * 3.2), capped at 3.4m/s.
+ * Snallygaster rear formation, adapted to HostSim's heading-based target calculation.
+ * Original source uses three campers per rank, +/-0.34 rad spread and +0.7m per rank.
+ *
+ * HostSim's heading is playerYaw + PI, so adding PI here reproduces the original
+ * target: player - forward(rearYaw) * radius.
  */
-export function snallyFollowerPlan(
+export function followerPlan(
+  slot: number,
+  _followerCount: number,
+  distanceToPlayer: number,
+  playerSprint: boolean,
+  _playerMoving: boolean,
+): FollowPlan {
+  const angle = Math.PI + (slot % 3 - 1) * 0.34;
+  const ring = Math.floor(slot / 3);
+  const radius = SNALLY_FOLLOW_DISTANCE + ring * 0.7;
+  const cap = playerSprint ? 5.7 : SNALLY_FOLLOW_SPEED;
+  const speed = Math.min(cap, Math.max(0, distanceToPlayer - radius) * 3.2);
+  return { radius, angle, speed, stopRadius: 0.08 };
+}
+
+/**
+ * Direct form of the original Snallygaster target calculation, exported for deterministic tests
+ * and later navmesh/crowd integration.
+ */
+export function snallyFollowerTarget(
   camperIndex: number,
   playerX: number,
   playerZ: number,
   playerYaw: number,
-  camperX: number,
-  camperZ: number,
-  playerSprint = false,
-): FollowPlan {
+): { x: number; z: number; radius: number } {
   const angle = (camperIndex % 3 - 1) * 0.34;
   const ring = Math.floor(camperIndex / 3);
   const radius = SNALLY_FOLLOW_DISTANCE + ring * 0.7;
   const rearYaw = playerYaw + Math.PI + angle;
-  const targetX = playerX - Math.sin(rearYaw) * radius;
-  const targetZ = playerZ - Math.cos(rearYaw) * radius;
-  const d = Math.hypot(targetX - camperX, targetZ - camperZ);
-
-  // Preserve the original Snallygaster cap, but allow a counselor sprint to pull the group without
-  // permanently losing campers. Normal walking behavior remains the original implementation.
-  const cap = playerSprint ? 5.7 : SNALLY_FOLLOW_SPEED;
-  return { targetX, targetZ, speed: Math.min(cap, d * 3.2), stopRadius: 0.08 };
+  return {
+    x: playerX - Math.sin(rearYaw) * radius,
+    z: playerZ - Math.cos(rearYaw) * radius,
+    radius,
+  };
 }
 
 /** Smooth velocity change around the proven target, avoiding frame-dependent position snapping. */
