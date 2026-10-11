@@ -31,13 +31,9 @@ export function showArrivalBriefing(root: HTMLElement): Promise<void> {
       h('p', { cls: 'gary-sign' }, '— Gary'));
     const screen = h('div', { cls: 'gary-screen', id: 'arrival-briefing' }, style,
       h('div', { cls: 'gary-board' }, photo, note,
-        h('button', { cls: 'gary-go', id: 'btn-arrive' }, 'GET OFF THE BUS →')));
+        h('button', { cls: 'gary-go', id: 'btn-arrive' }, 'I’VE READ IT — GET OFF THE BUS →')));
     root.replaceChildren(screen);
     const button = screen.querySelector<HTMLButtonElement>('#btn-arrive')!;
-    let done = false;
-    const finish = () => { if (done) return; done = true; clearTimeout(auto); resolve(); };
-    button.addEventListener('click', finish, { once: true });
-    // Keeps automated multiplayer tests and unattended clients from deadlocking at the narrative card.
-    const auto = window.setTimeout(finish, 4200);
+    button.addEventListener('click', () => resolve(), { once: true });
   });
 }
