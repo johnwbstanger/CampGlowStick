@@ -2,7 +2,10 @@ import * as THREE from 'three';
 import type { PlayerState } from '../net/protocol';
 import { buildCamper, COUNSELORS, poseCamper, type Camper, type Pose } from './campers';
 
-/** Stable gameplay actor API with imported Quaternius model/animation selection hidden underneath. */
+/**
+ * Counselor actor backed by the same smooth matte SDF character system as the campers.
+ * Multiplayer state/physics stay independent from the render mesh so this remains safe to swap later.
+ */
 export class CounselorActor {
   root: THREE.Group;
   private actor: Camper;
