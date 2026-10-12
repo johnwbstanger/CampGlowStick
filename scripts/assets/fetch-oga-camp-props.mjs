@@ -21,7 +21,7 @@ const cooler = {
   url: 'https://opengameart.org/sites/default/files/cooking_assets.zip',
   page: 'https://opengameart.org/content/cooking-assets',
   author: 'MilkAndBanana',
-  source: 'Cooking Assets',
+  source: 'Cooking Assets — Cooler Box',
   license: 'CC0-1.0',
   match: /cooler/i,
 };
@@ -52,6 +52,14 @@ async function expandNestedZips(root) {
       unzip(zip, out);
     }
   }
+}
+async function cleanupTemp(tmp) {
+  // Some OpenGameArt archives preserve read-only directory modes. The copied GLB is already safely
+  // outside this tree; cleanup must never invalidate an otherwise successful import.
+  spawnSync('chmod', ['-R', 'u+rwX', tmp], { encoding: 'utf8' });
+  await rm(tmp, { recursive: true, force: true }).catch((e) => {
+    console.warn(`[assets] could not fully remove temp directory ${tmp}:`, e instanceof Error ? e.message : e);
+  });
 }
 async function fetchBackpack(dest) {
   const r = await fetch(backpack.url, { headers: { 'User-Agent': 'CampGlowstick-asset-import/1.0' } });
@@ -86,7 +94,7 @@ async function fetchCooler(dest) {
     if (!validGlb(glb)) throw new Error(`cooler: selected ${basename(chosen)} is not a valid binary glTF`);
     await cp(chosen, dest);
   } finally {
-    await rm(tmp, { recursive: true, force: true });
+    await cleanupTemp(tmp);
   }
 }
 
