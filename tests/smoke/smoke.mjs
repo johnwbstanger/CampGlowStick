@@ -58,6 +58,7 @@ async function startGame(h, guests) {
     await p.waitForSelector('#arrival-briefing', { timeout: 10000 });
     const text = await p.innerText('#arrival-briefing');
     assert(text.includes('GARY') && text.includes('scratching') && text.includes('gun'), `${p.label} missing Gary briefing content`);
+    // Gary is deliberately click-to-continue; there is no narrative timeout anymore.
     await sleep(250);
     assert(await p.locator('#arrival-briefing').count() === 1, `${p.label} Gary briefing auto-dismissed`);
     await p.locator('#btn-arrive').evaluate((el) => el.click());
@@ -65,17 +66,6 @@ async function startGame(h, guests) {
   await Promise.all([h, ...guests].map((p) => p.waitForFunction(() => window.__cg?.ready && window.__cg.frames() > 5, null, { timeout: 90000 })));
 }
 const cg = (p, fn, arg) => p.evaluate(fn, arg);
-
-async function closePreview() {
-  localPeer?.close?.();
-  server.httpServer.closeIdleConnections?.();
-  server.httpServer.closeAllConnections?.();
-  await Promise.race([
-    new Promise((resolve) => server.httpServer.close(() => resolve(undefined))),
-    new Promise((resolve) => setTimeout(resolve, 1200)),
-  ]);
-  server.httpServer.unref?.();
-}
 
 try {
   let H, g1, g2;
@@ -185,6 +175,8 @@ try {
       return c && Math.hypot(c.x - p.x, c.z - p.z) < 4.5;
     }, camper.id, { timeout: 7000 });
 
+    // Walk the counselor toward extraction in moderate hops so this remains a follower/boarding test,
+    // not an artificial across-the-map teleport race.
     local = await cg(H, () => window.__cg.local());
     for (let i = 1; i <= 7; i++) {
       const t = i / 7;
@@ -233,6 +225,8 @@ try {
   });
 
   await check('successful rescue produces camper-safe bus departure outro', async () => {
+    // Gather every camper first, then make one escorted return to the bus. This matches the new
+    // Snallygaster-style followers better than teleporting each child across the entire map.
     for (let n = 0; n < 7; n++) {
       const campers = await cg(H, () => window.__cg.campers());
       const camper = campers.find((c) => !c.rescued && c.foundBy < 0);
@@ -252,9 +246,9 @@ try {
 
   await check('no console errors', async () => { assert(consoleErrors.length === 0, consoleErrors.slice(0, 6).join(' | ')); });
 } finally {
-  await Promise.all(contexts.map((c) => c.close().catch(() => undefined)));
   await browser.close().catch(() => undefined);
-  await closePreview();
+  await new Promise((r) => server.httpServer.close(r));
+  localPeer?.close?.();
 }
 
 const failed = results.filter((r) => !r.ok);
