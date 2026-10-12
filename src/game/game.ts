@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { getModel, preload } from '../assets/loader';
 import { MANIFEST, type AssetName } from '../assets/manifest';
-import { growl, playMaterial } from '../audio/synth';
+import { creaturePresence, creatureStep, growl, playMaterial } from '../audio/synth';
 import type { Voice } from '../audio/voice';
 import type { GameSnap, ItemDef, Msg } from '../net/protocol';
 import { TICK_MS } from '../net/protocol';
@@ -65,7 +65,11 @@ export class Game {
   private last = performance.now();
   private tickLast = performance.now();
   private monsterTarget = new THREE.Vector3();
+  private monsterAudioLast = new THREE.Vector3();
+  private monsterStepTravel = 0;
+  private monsterPresenceAt = -Infinity;
   private monsterMode = 'idle';
+  private lastLocalGunAt = -Infinity;
   private overShown = false;
   private disposed = false;
   private timers: number[] = [];
@@ -104,6 +108,8 @@ export class Game {
     this.monster = new Actor('monster');
     this.monster.root.scale.set(0.78, 1.34, 0.78);
     this.monster.root.position.set(layout.monsterStart[0], terrainHeight(layout.monsterStart[0], layout.monsterStart[1], layout), layout.monsterStart[1]);
+    this.monsterTarget.copy(this.monster.root.position);
+    this.monsterAudioLast.copy(this.monster.root.position);
     this.monster.root.visible = false;
     this.monster.play('walk');
     this.scene.add(this.monster.root);
@@ -181,6 +187,11 @@ export class Game {
   };
 
   act(a: 'pick' | 'drop' | 'throw' | 'snap' | 'night' | 'fire' | 'door', force?: number, target?: string): void {
+    if (a === 'fire') {
+      const now = performance.now();
+      if (now - this.lastLocalGunAt < 360) return;
+      this.lastLocalGunAt = now;
+    }
     this.net.sendToHost({ t: 'act', a, color: this.glow, force, target });
     if (a === 'snap') playMaterial('glow', 5);
     if (a === 'fire') {
@@ -219,6 +230,29 @@ export class Game {
     else if (msg.t === 's') this.applySnap(msg);
   }
 
+  private updateCreatureAudio(s: GameSnap): void {
+    const m = s.monster;
+    const dist = Math.hypot(m.p[0] - this.local.pos.x, m.p[2] - this.local.pos.z);
+    const active = s.night && m.mode !== 'idle' && m.mode !== 'stunned';
+    const moved = Math.hypot(m.p[0] - this.monsterAudioLast.x, m.p[2] - this.monsterAudioLast.z);
+    if (active) {
+      this.monsterStepTravel += moved;
+      const chasing = m.mode === 'chase' || m.mode === 'attack' || m.mode === 'reacquire';
+      const stride = chasing ? 1.0 : 1.38;
+      if (this.monsterStepTravel >= stride) {
+        creatureStep(dist, chasing);
+        this.monsterStepTravel %= stride;
+      }
+      const now = performance.now();
+      const cueGap = chasing ? 1050 : 2350;
+      if (dist < 15.5 && now - this.monsterPresenceAt > cueGap) {
+        creaturePresence(dist, chasing);
+        this.monsterPresenceAt = now;
+      }
+    } else this.monsterStepTravel = 0;
+    this.monsterAudioLast.set(m.p[0], m.p[1], m.p[2]);
+  }
+
   private applySnap(s: GameSnap): void {
     this.snap = s;
     this.light.setTime(s.time, s.night);
@@ -253,6 +287,7 @@ export class Game {
 
     const m = s.monster;
     this.monsterTarget.set(m.p[0], terrainHeight(m.p[0], m.p[2], this.layout), m.p[2]);
+    this.updateCreatureAudio(s);
     this.monster.root.rotation.y = m.yaw;
     this.monster.root.visible = s.night && m.mode !== 'idle';
     if (m.mode === 'chase' && this.monsterMode !== 'chase') growl();

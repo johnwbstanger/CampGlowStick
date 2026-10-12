@@ -7,7 +7,8 @@ import { terrainSlope } from './terrain';
 
 export interface Placed { name: AssetName; x: number; z: number; rot: number; solid: boolean; scale?: number }
 export interface Decal { host: number; side: number; text: string; creepy: boolean }
-export interface ItemSpawn { model: AssetName; kind: 'prop' | 'loot'; x: number; z: number }
+/** Dynamic item socket. `lift` is metres above its normal ground-resting center, used for authored stacks. */
+export interface ItemSpawn { model: AssetName; kind: 'prop' | 'loot'; x: number; z: number; lift?: number }
 export interface Road { points: [number, number][]; width: number; kind?: 'gravel' | 'dirt' | 'foot' }
 export interface Clearing { x: number; z: number; rx: number; rz: number; kind?: string }
 export interface WaterArea { x: number; z: number; rx: number; rz: number; y: number }
@@ -158,6 +159,18 @@ export function buildLayout(seed: number, need = 3): Layout {
   scatterZone(108, 121, 24, 18, work, 24);
   scatterZone(0, -130, 44, 17, waterfront, 18);
   scatterZone(40, -35, 23, 18, social, 14);
+
+  // Deliberately unstable physics stacks. Small horizontal offsets plus the normal randomized body
+  // tilt make them stable enough to exist at round start but easy to cascade when a counselor bumps
+  // or throws something into them. Every resulting Cannon impact already emits material/noise events.
+  const stack = (x: number, z: number, entries: [AssetName, number, number, number][]) => {
+    for (const [model, lift, dx, dz] of entries) items.push({ model, kind: 'prop', x: x + dx, z: z + dz, lift });
+  };
+  stack(105, 116, [['crate', 0, 0, 0], ['crate', .58, .04, -.03], ['bucket', 1.13, -.06, .03], ['can', 1.55, .08, 0]]);
+  stack(111, 122, [['barrel', 0, 0, 0], ['crate', .82, .05, 0], ['cooler', 1.39, -.07, .04], ['can', 1.93, .08, -.04]]);
+  stack(-42, 16, [['crate', 0, 0, 0], ['cooler', .58, -.05, .02], ['radio', 1.12, .07, -.03], ['mug', 1.45, -.1, .04]]);
+  stack(-31, -124, [['cooler', 0, 0, 0], ['crate', .58, .06, .02], ['bucket', 1.13, -.05, -.03], ['bottle', 1.51, .08, .05]]);
+  stack(35, -31, [['crate', 0, 0, 0], ['crate', .58, -.05, .04], ['lantern', 1.13, .08, -.03], ['can', 1.58, -.08, .03]]);
 
   return {
     seed,

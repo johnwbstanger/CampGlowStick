@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { MANIFEST } from '../../src/assets/manifest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { MANIFEST, ALWAYS_PRELOAD } from '../../src/assets/manifest';
 import { CABINS, CAMP_PLAN } from '../../src/game/campPlan';
 import { WORLD_HALF } from '../../src/game/constants';
 import { buildLayout } from '../../src/game/layout';
@@ -36,7 +38,6 @@ describe('imported world-stack replacement', () => {
     expect(data).toHaveLength(25);
     expect(data[0]).toHaveLength(25);
     expect(elementSize).toBeCloseTo((WORLD_HALF * 2) / 24);
-    // Heightfield local +Y becomes world -Z after the host's -90° X rotation.
     expect(data[0][0]).toBeCloseTo(terrainHeight(-WORLD_HALF, WORLD_HALF), 6);
     expect(data[24][24]).toBeCloseTo(terrainHeight(WORLD_HALF, -WORLD_HALF), 6);
   });
@@ -62,15 +63,33 @@ describe('imported world-stack replacement', () => {
     expect(Math.hypot(last.x - CAMP_PLAN.extraction.x, last.z - CAMP_PLAN.extraction.z)).toBeLessThan(.1);
   });
 
+  it('authors multiple unstable dynamic clutter towers that can cascade into the noise system', () => {
+    const layout = buildLayout(855193, 3);
+    const elevated = layout.items.filter((item) => (item.lift ?? 0) > 0.5);
+    expect(elevated.length).toBeGreaterThanOrEqual(12);
+    expect(Math.max(...elevated.map((item) => item.lift ?? 0))).toBeGreaterThan(1.4);
+
+    const stackCenters = [[105, 116], [111, 122], [-42, 16], [-31, -124], [35, -31]];
+    for (const [x, z] of stackCenters) {
+      const nearby = layout.items.filter((item) => Math.hypot(item.x - x, item.z - z) < .5);
+      expect(nearby.length).toBeGreaterThanOrEqual(4);
+      expect(nearby.some((item) => (item.lift ?? 0) > 1)).toBe(true);
+    }
+  });
+
   it('uses actual imported camp props instead of the old crate/bedroll stand-ins', () => {
     expect(MANIFEST.cooler.file).toContain('cc0-camp-props/cooler.glb');
     expect(MANIFEST.backpack.file).toContain('cc0-camp-props/backpack.glb');
   });
 
-  it('keeps multiple imported counselor and camper bodies available', () => {
-    expect(MANIFEST.counselorMaleCasual.file).toContain('camp-characters');
-    expect(MANIFEST.counselorFemaleCasual.file).toContain('camp-characters');
-    expect(MANIFEST.camperMaleVariant.file).toContain('camp-characters');
-    expect(MANIFEST.camperFemaleVariant.file).toContain('camp-characters');
+  it('keeps the handmade SDF campers and counselors canonical', () => {
+    const source = readFileSync(join(__dirname, '../../src/game/campers.ts'), 'utf8');
+    const counselors = readFileSync(join(__dirname, '../../src/game/counselors.ts'), 'utf8');
+    expect(source).toContain('User-supplied SDF character system');
+    expect(source).toContain('function polygonize');
+    expect(source).toContain('buildCamper');
+    expect(source).toContain('poseCamper');
+    expect(counselors).toContain("from './campers'");
+    expect(ALWAYS_PRELOAD.some((name) => /camper|counselor/i.test(name))).toBe(false);
   });
 });

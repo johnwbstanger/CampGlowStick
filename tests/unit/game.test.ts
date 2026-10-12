@@ -9,8 +9,8 @@ import { buildLayout } from '../../src/game/layout';
 import { findPath } from '../../src/game/navigation';
 
 describe('dusk', () => {
-  it('uses a six minute sunset-to-night transition', () => {
-    expect(DAY_SECONDS).toBe(360);
+  it('gives level one a nine minute blue-sky-to-night orientation arc', () => {
+    expect(DAY_SECONDS).toBe(540);
   });
 });
 

@@ -20,15 +20,15 @@ function canvasSign(text: string, width: number): THREE.Mesh {
   const canvas = document.createElement('canvas'); canvas.width = 768; canvas.height = 192;
   const c = canvas.getContext('2d')!;
   c.fillStyle = '#315247'; c.fillRect(0, 0, canvas.width, canvas.height);
-  c.strokeStyle = '#d49a4b'; c.lineWidth = 18; c.strokeRect(12, 12, canvas.width - 24, canvas.height - 24);
-  c.fillStyle = '#f0dfb6'; c.font = '700 70px Georgia, serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(text, canvas.width / 2, canvas.height / 2 + 4);
+  c.strokeStyle = '#d49a4b'; c.lineWidth = 13; c.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
+  c.fillStyle = '#f0dfb6'; c.font = '700 58px Georgia, serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(text, canvas.width / 2, canvas.height / 2 + 3);
   const map = new THREE.CanvasTexture(canvas); map.colorSpace = THREE.SRGBColorSpace;
   return new THREE.Mesh(new THREE.PlaneGeometry(width, width * .25), new THREE.MeshStandardMaterial({ map, roughness: .95, metalness: 0 }));
 }
 
 function addFurniture(g: THREE.Group, def: LandmarkDef): void {
   const add = (name: Parameters<typeof getModel>[0], x: number, z: number, rot = 0, scale = 1) => {
-    const o = getModel(name); o.position.set(x, .03, z); o.rotation.y = rot; o.scale.multiplyScalar(scale); g.add(o);
+    const o = getModel(name); o.position.set(x, .035, z); o.rotation.y = rot; o.scale.multiplyScalar(scale); g.add(o);
   };
   if (def.kind === 'dining') {
     for (const z of [-2.5, 0, 2.5]) for (const x of [-4.5, 0, 4.5]) { add('table', x, z, 0, 1.05); add('chair', x - 1.25, z, Math.PI / 2); add('chair', x + 1.25, z, -Math.PI / 2); }
@@ -49,21 +49,22 @@ function assemble(def: LandmarkDef, layout: Layout): THREE.Group {
   const g = new THREE.Group(); g.name = `imported-building:${def.kind}`;
   g.position.set(def.x, terrainHeight(def.x, def.z, layout), def.z); g.rotation.y = def.rot;
   const h = def.h, w = def.w, d = def.d, salt = hash(def.kind);
-  const wall = pick('wall', salt), window = pick('window', salt + 3), door = pick('door', salt + 5), roof = pick('roof', salt + 7), floor = pick('floor', salt + 9), structure = pick('structure', salt + 11), porch = pick('porch', salt + 13), stairs = pick('stairs', salt + 15);
+  const wall = pick('wall', salt), window = pick('window', salt + 3), roof = pick('roof', salt + 7), floor = pick('floor', salt + 9), structure = pick('structure', salt + 11), porch = pick('porch', salt + 13), stairs = pick('stairs', salt + 15);
   const t = .22, doorW = 1.55, bay = Math.max(2.1, Math.min(3.6, w / 4));
 
   placeModule(g, floor, [w, .16, d], [0, .02, 0]);
-  // Back wall: alternating wall/window bays gives readable architecture without raw geometry.
   const backCount = Math.max(2, Math.round(w / bay));
   for (let i = 0; i < backCount; i++) {
     const bw = w / backCount, x = -w / 2 + bw * (i + .5);
     placeModule(g, i % 2 && window ? window : wall, [bw, h, t], [x, 0, -d / 2], 0);
   }
-  // Front wall leaves a real door-sized gap and uses the authored door asset in it.
+
+  // Keep the front-center opening physically and visually empty. world.ts owns the one authoritative
+  // interactive door leaf + collider; putting a decorative imported door here created a second closed
+  // door that players could see even after the real door opened.
   const sideW = (w - doorW) / 2;
   placeModule(g, window ?? wall, [sideW, h, t], [-(w + doorW) / 4, 0, d / 2], Math.PI);
   placeModule(g, window ?? wall, [sideW, h, t], [(w + doorW) / 4, 0, d / 2], Math.PI);
-  placeModule(g, door, [doorW, Math.min(2.45, h * .78), t * 1.4], [0, 0, d / 2 + .02], Math.PI);
 
   const sideCount = Math.max(2, Math.round(d / bay));
   for (const sx of [-1, 1]) for (let i = 0; i < sideCount; i++) {
@@ -75,11 +76,13 @@ function assemble(def: LandmarkDef, layout: Layout): THREE.Group {
   placeModule(g, roof, [w + .85, Math.max(.55, h * .24), d + 1.0], [0, h - .03, 0]);
   if (structure) for (const [x, z] of [[-w / 2, -d / 2], [w / 2, -d / 2], [-w / 2, d / 2], [w / 2, d / 2]] as [number, number][]) placeModule(g, structure, [.22, h, .22], [x, 0, z]);
 
-  // Arrival-facing porch: imported balcony/porch pieces plus imported stairs when available.
   if (porch) placeModule(g, porch, [Math.min(w * .66, 7), .7, 2.0], [0, 0, d / 2 + 1.05], Math.PI);
   if (stairs) placeModule(g, stairs, [2.0, .65, 1.25], [0, -.02, d / 2 + 2.0], Math.PI);
 
-  const sign = canvasSign(def.label, Math.min(w * .58, 7.2)); sign.position.set(0, h * .72, d / 2 + .18); sign.rotation.y = Math.PI; g.add(sign);
+  // Previous labels could span over half the facade and read like giant billboards. Keep them as small
+  // believable camp placards above the entrance instead.
+  const signWidth = Math.max(1.45, Math.min(w * .24, 3.25));
+  const sign = canvasSign(def.label, signWidth); sign.position.set(0, Math.min(h * .76, 2.45), d / 2 + .18); sign.rotation.y = Math.PI; g.add(sign);
   addFurniture(g, def);
   return g;
 }

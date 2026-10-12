@@ -20,11 +20,11 @@ function tone(type: OscillatorType, f0: number, f1: number, dur: number, gain: n
   g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   o.connect(g).connect(a.destination); o.start(t); o.stop(t + dur + 0.02);
 }
-function hiss(dur: number, gain: number, freq: number, type: BiquadFilterType = 'highpass'): void {
+function hiss(dur: number, gain: number, freq: number, type: BiquadFilterType = 'highpass', delay = 0): void {
   const a = audio(); if (!a || !noiseBuf) return;
-  const t = a.currentTime, s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+  const t = a.currentTime + delay, s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
   s.buffer = noiseBuf; f.type = type; f.frequency.value = freq;
-  g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  g.gain.setValueAtTime(Math.max(.0001, gain), t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   s.connect(f).connect(g).connect(a.destination); s.start(t); s.stop(t + dur);
 }
 
@@ -44,5 +44,25 @@ export function playMaterial(mat: string, volume: number): void {
     default: hiss(0.06, v * 0.5, 800, 'lowpass');
   }
 }
+
+/** Creature locomotion cue. Distance is world metres; it deliberately becomes audible before sight range. */
+export function creatureStep(distance: number, chasing = false): void {
+  const near = Math.max(0, Math.min(1, 1 - distance / (chasing ? 40 : 34)));
+  if (near < .035) return;
+  const v = (.025 + near * .15) * (chasing ? 1.18 : 1);
+  tone('sine', chasing ? 72 : 61, 34, .16, v);
+  tone('triangle', 118, 52, .11, v * .55, .018);
+  hiss(.08, v * .28, 280, 'lowpass', .015);
+}
+
+/** Breathing/brush cue for very near stalk/search states so the monster cannot silently pop into view. */
+export function creaturePresence(distance: number, chasing = false): void {
+  const near = Math.max(0, Math.min(1, 1 - distance / 16));
+  if (near < .04) return;
+  const v = .025 + near * .11;
+  hiss(chasing ? .32 : .52, v, chasing ? 620 : 390, 'lowpass');
+  tone('sawtooth', chasing ? 82 : 67, chasing ? 51 : 42, chasing ? .26 : .46, v * .55, .03);
+}
+
 export const click = (): void => { tone('square', 1200, 300, 0.03, 0.15); hiss(0.03, 0.1, 2000); };
 export function growl(): void { tone('sawtooth', 70, 40, 0.8, 0.12); }

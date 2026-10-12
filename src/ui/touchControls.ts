@@ -129,8 +129,7 @@ export class TouchControls {
       this.updateMove(e.clientX, e.clientY);
     };
     const endPointer = (e: PointerEvent) => {
-      if (this.moveId < 0) return;
-      if (e.pointerId !== this.moveId && e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+      if (this.moveId < 0 || e.pointerId !== this.moveId) return;
       e.preventDefault(); e.stopPropagation();
       this.endMove();
     };
@@ -138,7 +137,8 @@ export class TouchControls {
     this.movePad.addEventListener('pointerdown', startPointer, { passive: false });
     // Track on BOTH the pad and window. Real iPad Safari can lose pointer capture over WebGL,
     // while Playwright/iOS emulation dispatches the move to the originating pad. Handling both
-    // paths also makes drag input robust when a thumb leaves the circular pad.
+    // paths also makes drag input robust when a thumb leaves the circular pad. Pointer ownership is
+    // strict: lifting a second finger on the right-look surface must never cancel the left joystick.
     this.movePad.addEventListener('pointermove', movePointer, { passive: false });
     this.movePad.addEventListener('pointerup', endPointer, { passive: false });
     this.movePad.addEventListener('pointercancel', endPointer, { passive: false });
@@ -207,7 +207,7 @@ export class TouchControls {
       if (e.pointerId === this.lookId) { e.preventDefault(); this.moveLook(e.clientX, e.clientY); }
     }, { passive: false });
     this.lookPad.addEventListener('pointerup', (e) => { if (e.pointerId === this.lookId) { e.preventDefault(); this.endLook(); } }, { passive: false });
-    this.lookPad.addEventListener('pointercancel', () => { this.lookId = -1; this.lookMoved = false; }, { passive: false });
+    this.lookPad.addEventListener('pointercancel', (e) => { if (e.pointerId === this.lookId) { this.lookId = -1; this.lookMoved = false; } }, { passive: false });
     this.lookPad.addEventListener('lostpointercapture', (e) => { if (e.pointerId === this.lookId) { this.lookId = -1; this.lookMoved = false; } });
 
     this.lookPad.addEventListener('touchstart', (e) => {

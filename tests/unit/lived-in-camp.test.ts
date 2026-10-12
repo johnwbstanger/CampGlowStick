@@ -13,10 +13,10 @@ describe('lived-in camp asset pass', () => {
     }
   });
 
-  it('keeps the gameplay floor flat so structures and physics share one stable ground plane', () => {
-    for (const [x, z] of [[0, 0], [110, 70], [-95, -42], [37, -81], [103, -4]]) {
-      expect(terrainHeight(x, z)).toBe(0);
-    }
+  it('uses finite sculpted terrain across the camp instead of the obsolete flat floor', () => {
+    const samples = [[0, 0], [110, 70], [-95, -42], [37, -81], [103, -4]].map(([x, z]) => terrainHeight(x, z));
+    expect(samples.every(Number.isFinite)).toBe(true);
+    expect(Math.max(...samples) - Math.min(...samples)).toBeGreaterThan(.25);
   });
 
   it('uses deterministic blue-noise spacing for prop yards', () => {
