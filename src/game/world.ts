@@ -92,11 +92,13 @@ function addBusInterior(g: THREE.Group, L: number, W: number, H: number): void {
   const seatMat = new THREE.MeshStandardMaterial({ color: '#335b53', roughness: .9, metalness: .01 });
   const glass = new THREE.MeshStandardMaterial({ color: '#8eb6c7', roughness: .12, transparent: true, opacity: .28, depthWrite: false, side: THREE.DoubleSide });
 
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(L - .5, .12, W - .36), dark); floor.position.set(0, .34, 0); floor.receiveShadow = true; g.add(floor);
+  // Player feet remain on terrainHeight at the bus. Keep the visual floor nearly flush with that walk plane
+  // rather than lifting it 30+ cm above the collision world.
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(L - .5, .10, W - .36), dark); floor.position.set(0, .055, 0); floor.receiveShadow = true; g.add(floor);
   const ceiling = new THREE.Mesh(new THREE.BoxGeometry(L - .55, .11, W - .34), yellow); ceiling.position.set(0, H - .13, 0); ceiling.receiveShadow = true; g.add(ceiling);
 
   const seat = (x: number, z: number, rot: number) => {
-    const root = new THREE.Group(); root.position.set(x, .44, z); root.rotation.y = rot;
+    const root = new THREE.Group(); root.position.set(x, .12, z); root.rotation.y = rot;
     const cushion = new THREE.Mesh(new THREE.BoxGeometry(.7, .16, .58), seatMat); cushion.position.y = .42;
     const back = new THREE.Mesh(new THREE.BoxGeometry(.7, .82, .13), seatMat); back.position.set(0, .86, .24);
     const legs = new THREE.Mesh(new THREE.BoxGeometry(.5, .38, .34), dark); legs.position.y = .19;
@@ -110,13 +112,12 @@ function addBusInterior(g: THREE.Group, L: number, W: number, H: number): void {
     const w = new THREE.Mesh(windowGeo, glass); w.position.set(x, 1.82, z); w.rotation.y = z < 0 ? 0 : Math.PI; g.add(w);
   }
 
-  // Stairwell at the passenger door makes entering the bus visually and physically legible.
   for (let i = 0; i < 3; i++) {
-    const step = new THREE.Mesh(new THREE.BoxGeometry(.86, .12, .42), dark); step.position.set(1.42, .08 + i * .12, -W / 2 + .15 + i * .18); g.add(step);
+    const step = new THREE.Mesh(new THREE.BoxGeometry(.86, .10, .42), dark); step.position.set(1.42, .05 + i * .08, -W / 2 + .15 + i * .18); g.add(step);
   }
 }
 
-function makeBusDoor(g: THREE.Group, p: Placed, y: number, L: number, W: number, colliders: Box[], doors: Map<string, DoorView>): void {
+function makeBusDoor(g: THREE.Group, p: Placed, y: number, _L: number, W: number, colliders: Box[], doors: Map<string, DoorView>): void {
   const x0 = .55, x1 = 2.25, doorW = x1 - x0;
   const pivot = new THREE.Group(); pivot.position.set(x0, 0, -W / 2 - .055); pivot.name = 'bus-door-pivot';
   const frame = new THREE.MeshStandardMaterial({ color: '#d99b20', roughness: .62, metalness: .12 });
@@ -130,7 +131,7 @@ function makeBusDoor(g: THREE.Group, p: Placed, y: number, L: number, W: number,
   doors.set('door:bus', { id: 'door:bus', x, z, pivot, collider, closed: { ...closed }, open: false });
 }
 
-function addBusLights(g: THREE.Group, L: number, W: number): void {
+function addBusLights(g: THREE.Group, L: number, _W: number): void {
   const lens = new THREE.MeshStandardMaterial({ color: '#fff4c0', emissive: '#ffe7a0', emissiveIntensity: 2.4, roughness: .2 });
   for (const z of [-.88, .88]) {
     const bulb = new THREE.Mesh(new THREE.CylinderGeometry(.14, .14, .07, 16), lens); bulb.rotation.z = Math.PI / 2; bulb.position.set(L / 2 + .06, .92, z); g.add(bulb);
@@ -149,6 +150,11 @@ function makeBus(p: Placed, layout: Layout, colliders: Box[], doors: Map<string,
   pushWorldRect(colliders, p.x, p.z, p.rot, L / 2 - t, L / 2 + t, -W / 2, W / 2, y, y + H);
   pushWorldRect(colliders, p.x, p.z, p.rot, -L / 2, .55, -W / 2 - t, -W / 2 + t, y, y + H);
   pushWorldRect(colliders, p.x, p.z, p.rot, 2.25, L / 2, -W / 2 - t, -W / 2 + t, y, y + H);
+
+  // Seat collision: keep a full center aisle clear while preventing counselors from ghosting through rows.
+  for (const sx of [-3.25, -2.05, -.85, .35, 2.75, 3.75]) {
+    for (const sz of [-.83, .83]) pushWorldRect(colliders, p.x, p.z, p.rot, sx - .36, sx + .36, sz - .32, sz + .32, y + .08, y + 1.35);
+  }
   return g;
 }
 
@@ -158,8 +164,6 @@ function addStaticBuildingColliders(world: THREE.Group, p: Placed, o: THREE.Obje
   if (p.name === 'cabin' || p.name === 'shed' || p.name === 'boathouse') {
     const size = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3()), y = terrainHeight(p.x, p.z, layout), w = size.x, d = size.z, h = Math.max(2.5, size.y); addRectShell(colliders, p.x, p.z, p.rot, w, d, h, y, 1.4);
     if (p.name === 'cabin') {
-      // Keep doors at world scale. Parenting the already-world-sized door under a randomly scaled cabin
-      // used to scale it a second time, which is why cabin doors could disappear into or float off facades.
       world.add(makeDoor(`door:cabin:${index}`, p.x, p.z, p.rot, w, d, y, colliders, doors));
     }
   } else if (p.name === 'trailShelter') {
