@@ -27,6 +27,17 @@ p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
 const waitGame = () => p.waitForFunction(() => window.__cg?.ready && window.__cg.frames() > 5, null, { timeout: 90000 });
 
+async function closePreview() {
+  localPeer?.close?.();
+  server.httpServer.closeIdleConnections?.();
+  server.httpServer.closeAllConnections?.();
+  await Promise.race([
+    new Promise((resolve) => server.httpServer.close(() => resolve(undefined))),
+    new Promise((resolve) => setTimeout(resolve, 1200)),
+  ]);
+  server.httpServer.unref?.();
+}
+
 try {
   await p.goto('http://127.0.0.1:4176/');
   await p.fill('#name', 'TouchCounselor');
@@ -50,14 +61,12 @@ try {
   if ((await moveRing.count()) !== 1) throw new Error('floating movement ring is missing from the DOM');
   if (await moveRing.evaluate((el) => el.classList.contains('active'))) throw new Error('floating movement ring should be dormant before thumb-down');
 
-  // The movement collider must be a broad thumb work-zone, not a tiny fixed joystick target.
   const pad = await p.locator('.touch-move').boundingBox();
   if (!pad) throw new Error('movement zone has no layout box');
   if (pad.width < 380 || pad.height < 450) throw new Error(`movement capture zone too small for iPad: ${JSON.stringify(pad)}`);
   const look = await p.locator('.touch-look').boundingBox();
   if (!look || look.width < 450 || look.height < 550) throw new Error(`right-look work-zone too small: ${JSON.stringify(look)}`);
 
-  // Map/overlay must be reversible on an iPad with no keyboard attached.
   const mapButton = p.locator('.touch-map');
   const mb = await mapButton.boundingBox();
   if (!mb) throw new Error('MAP button has no layout box');
@@ -81,7 +90,6 @@ try {
   await p.waitForFunction((y) => window.__cg.local().y > y + .08, beforeJump.y, { timeout: 3000 });
   await p.waitForTimeout(900);
 
-  // Start anywhere inside the broad left zone. The visible joystick should relocate beneath the thumb.
   const cx = pad.x + pad.width * .42, cy = pad.y + pad.height * .58;
   const beforeMove = await p.evaluate(() => window.__cg.local());
   await p.locator('.touch-move').dispatchEvent('pointerdown', { pointerId: 51, pointerType: 'touch', clientX: cx, clientY: cy, isPrimary: true, bubbles: true });
@@ -93,12 +101,10 @@ try {
   });
   if (Math.hypot(ringCenter.x - cx, ringCenter.y - cy) > 12) throw new Error(`floating joystick did not appear under thumb: thumb=${cx},${cy} ring=${JSON.stringify(ringCenter)}`);
 
-  // A moderate push should walk smoothly.
   await p.locator('.touch-move').dispatchEvent('pointermove', { pointerId: 51, pointerType: 'touch', clientX: cx, clientY: cy - 46, isPrimary: true, bubbles: true });
   await p.waitForTimeout(350);
   const beforeForeignRelease = await p.evaluate(() => window.__cg.local());
 
-  // Releasing a DIFFERENT touch pointer must never cancel the left stick.
   await p.evaluate(() => window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 77, pointerType: 'touch', clientX: 800, clientY: 360, bubbles: true })));
   await p.waitForTimeout(400);
   const afterForeignRelease = await p.evaluate(() => window.__cg.local());
@@ -106,7 +112,6 @@ try {
     throw new Error(`foreign touch pointer cancelled left joystick: before=${JSON.stringify(beforeForeignRelease)} after=${JSON.stringify(afterForeignRelease)}`);
   }
 
-  // Push into the outer ring: this should automatically engage sprint without holding a RUN button.
   await p.locator('.touch-move').dispatchEvent('pointermove', { pointerId: 51, pointerType: 'touch', clientX: cx, clientY: cy - 105, isPrimary: true, bubbles: true });
   await p.waitForFunction(() => document.querySelector('.touch-move-ring')?.classList.contains('sprinting'), null, { timeout: 1200 });
   const sprintStart = await p.evaluate(() => window.__cg.local());
@@ -119,7 +124,6 @@ try {
   const afterMove = await p.evaluate(() => window.__cg.local());
   if (Math.hypot(afterMove.x - beforeMove.x, afterMove.z - beforeMove.z) < .5) throw new Error(`floating joystick did not move the player: before=${JSON.stringify(beforeMove)} after=${JSON.stringify(afterMove)}`);
 
-  // Verify the right-look surface can own its own pointer while remaining independent from movement.
   const lx = look.x + look.width * .7, ly = look.y + look.height * .45;
   const yaw0 = (await p.evaluate(() => window.__cg.local())).yaw;
   await p.locator('.touch-look').dispatchEvent('pointerdown', { pointerId: 71, pointerType: 'touch', clientX: lx, clientY: ly, isPrimary: false, bubbles: true });
@@ -142,6 +146,5 @@ try {
 } finally {
   await ctx.close().catch(() => undefined);
   await browser.close().catch(() => undefined);
-  await new Promise((resolve) => server.httpServer.close(resolve));
-  localPeer?.close?.();
+  await closePreview();
 }
