@@ -1,4 +1,4 @@
-export const PLAYER = { radius: 0.35, height: 1.75, crouchHeight: 1.1, eye: 1.6, crouchEye: 1.0, walk: 3.2, sprint: 5.6, crouch: 1.6 };
+export const PLAYER = { radius: 0.35, height: 1.75, crouchHeight: 1.1, eye: 1.6, crouchEye: 1.0, walk: 5.6, sprint: 9.8, crouch: 1.9 };
 export const REACH = 2.6;
 /** Authored campground footprint: 360m x 360m with forested soft boundaries. */
 export const WORLD_HALF = 180;
