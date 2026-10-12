@@ -192,7 +192,10 @@ export class HostSim {
     const [fx, fy, fz] = viewForward(pl.state.yaw, pl.state.pitch);
     this.noise(ox, oz, VOLUME.crash, 'metal', 'gunshot');
 
-    const mdx = this.monster.x - ox, mdy = 1.35 - oy, mdz = this.monster.z - oz;
+    // Chest point must follow the sculpted terrain. The old fixed 1.35m world Y made uphill/downhill
+    // shots disagree with the visible creature even when the barrel/camera orientation was correct.
+    const monsterChestY = terrainHeight(this.monster.x, this.monster.z, this.layout) + 1.35;
+    const mdx = this.monster.x - ox, mdy = monsterChestY - oy, mdz = this.monster.z - oz;
     const malong = mdx * fx + mdy * fy + mdz * fz;
     const mx = mdx - fx * malong, my = mdy - fy * malong, mz = mdz - fz * malong;
     const mperp = Math.hypot(mx, my, mz);
