@@ -1,5 +1,5 @@
 import { mkdir, writeFile, access } from 'node:fs/promises';
-import { dirname, join, extname, basename, posix } from 'node:path';
+import { dirname, join, basename, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = 'agentkaerf/FreeModels';
@@ -9,12 +9,15 @@ const PREFIX = `${PACK}/glTF/`;
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'public', 'assets');
 const DEST = join(ROOT, 'buildings', 'quaternius-modular');
 const force = process.argv.includes('--force');
+const githubToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
 const exists = (p) => access(p).then(() => true, () => false);
 const raw = (path) => `https://raw.githubusercontent.com/${REPO}/${SHA}/${path.split('/').map(encodeURIComponent).join('/')}`;
 
 async function json(url) {
-  const r = await fetch(url, { headers: { Accept: 'application/vnd.github+json' } });
-  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'CampGlowstick-asset-import/1.0' };
+  if (githubToken) headers.Authorization = `Bearer ${githubToken}`;
+  const r = await fetch(url, { headers });
+  if (!r.ok) throw new Error(`${r.status} ${url}${r.status === 403 && !githubToken ? ' (set GITHUB_TOKEN to avoid GitHub API rate limits)' : ''}`);
   return r.json();
 }
 async function bytes(url) {
