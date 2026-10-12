@@ -1,10 +1,11 @@
-import { mkdir, writeFile, access, cp, readdir, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, access, cp, readdir, rm } from 'node:fs/promises';
 import { dirname, join, extname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'public', 'assets', 'models', 'cc0-camp-props');
+const ASSET_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'public', 'assets');
+const ROOT = join(ASSET_ROOT, 'models', 'cc0-camp-props');
 const BACKPACK_REPO = 'VitexSoftware/ishtaria-client';
 const BACKPACK_SHA = '33034c160e6d3f1cc39a3267a3594baad7722f8b';
 const BACKPACK_PATH = 'assets/quaternius/ultimate-rpg-items/Models/backpack.glb';
@@ -14,7 +15,7 @@ const backpack = {
   page: `https://github.com/${BACKPACK_REPO}/blob/${BACKPACK_SHA}/${BACKPACK_PATH}`,
   author: 'Quaternius',
   source: 'Ultimate RPG Items Bundle — backpack',
-  license: 'CC0-1.0',
+  license: 'CC0 1.0',
 };
 const cooler = {
   id: 'cooler',
@@ -22,7 +23,7 @@ const cooler = {
   page: 'https://opengameart.org/content/cooking-assets',
   author: 'MilkAndBanana',
   source: 'Cooking Assets — Cooler Box',
-  license: 'CC0-1.0',
+  license: 'CC0 1.0',
   match: /cooler/i,
 };
 
@@ -54,8 +55,6 @@ async function expandNestedZips(root) {
   }
 }
 async function cleanupTemp(tmp) {
-  // Some OpenGameArt archives preserve read-only directory modes. The copied GLB is already safely
-  // outside this tree; cleanup must never invalidate an otherwise successful import.
   spawnSync('chmod', ['-R', 'u+rwX', tmp], { encoding: 'utf8' });
   await rm(tmp, { recursive: true, force: true }).catch((e) => {
     console.warn(`[assets] could not fully remove temp directory ${tmp}:`, e instanceof Error ? e.message : e);
@@ -107,14 +106,25 @@ if (!await exists(coolerDest)) await fetchCooler(coolerDest);
 const catalog = [
   {
     id: 'backpack', file: 'models/cc0-camp-props/backpack.glb', category: 'camp_prop',
-    source: backpack.source, author: backpack.author, license: backpack.license,
+    source: backpack.source, author: backpack.author, license: backpack.license.replace(' ', '-'),
     url: backpack.page, download: backpack.url, collider: 'box', noiseMaterial: 'cloth', mass: 1.0,
   },
   {
     id: 'cooler', file: 'models/cc0-camp-props/cooler.glb', category: 'camp_prop',
-    source: cooler.source, author: cooler.author, license: cooler.license,
+    source: cooler.source, author: cooler.author, license: cooler.license.replace(' ', '-'),
     url: cooler.page, download: cooler.url, collider: 'box', noiseMaterial: 'plastic', mass: 2.6,
   },
 ];
 await writeFile(join(ROOT, 'catalog.json'), JSON.stringify({ license: 'CC0-1.0', entries: catalog }, null, 2));
+
+// Keep the legacy human-readable credits file authoritative for every shipped model. The core fetch
+// creates this table first; this importer appends its two real camp props after their binaries exist.
+const creditsPath = join(ASSET_ROOT, 'CREDITS.md');
+let credits = await readFile(creditsPath, 'utf8');
+const rows = [
+  `| backpack | ${backpack.source} | ${backpack.author} | [pinned source](${backpack.page}) | ${backpack.license} | \`models/cc0-camp-props/backpack.glb\` |`,
+  `| cooler | ${cooler.source} | ${cooler.author} | [OpenGameArt](${cooler.page}) | ${cooler.license} | \`models/cc0-camp-props/cooler.glb\` |`,
+];
+for (const row of rows) if (!credits.includes(row.slice(row.indexOf('`') + 1, row.lastIndexOf('`')))) credits += `${row}\n`;
+await writeFile(creditsPath, credits);
 console.log('CC0 camp props ready:', catalog.map((x) => x.id).join(', '));
