@@ -13,11 +13,12 @@ export function makeFlashlightCookie(): THREE.CanvasTexture {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
+const DAY = { bg: '#79B8E8', fog: '#A8C9D8', sky: '#9DD5FF', ground: '#61734B', hemi: 1.28, sun: 3.05, moon: 0, env: 0.62, fogFar: 245 };
 const SUNSET = { bg: '#F3A080', fog: '#DFA073', sky: '#FFC6A0', ground: '#67573A', hemi: 1.0, sun: 2.45, moon: 0, env: 0.48, fogFar: 205 };
 const GOLDEN = { bg: '#C9837B', fog: '#B47B69', sky: '#E7A48D', ground: '#4B4934', hemi: 0.82, sun: 1.55, moon: 0.05, env: 0.34, fogFar: 180 };
 const BLUE = { bg: '#655A83', fog: '#70647B', sky: '#8D86AE', ground: '#24352D', hemi: 0.58, sun: 0.44, moon: 0.2, env: 0.17, fogFar: 135 };
 const NIGHT = { bg: '#050B1C', fog: '#050B1C', sky: '#1B2A52', ground: '#06140E', hemi: 0.28, sun: 0, moon: 0.6, env: 0.03, fogFar: 82 };
-type Stage = typeof SUNSET;
+type Stage = typeof DAY;
 const C = (hex: string) => new THREE.Color(hex);
 const nlerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
@@ -27,15 +28,15 @@ export class Lighting {
   private t = 0;
   private touchLike = navigator.maxTouchPoints > 0 || /iPad|iPhone|Android/i.test(navigator.userAgent);
   hemi = new THREE.HemisphereLight();
-  sun = new THREE.DirectionalLight('#FFD0A0');
+  sun = new THREE.DirectionalLight('#FFF1C7');
   moon = new THREE.DirectionalLight('#7F93C8');
   flash = new THREE.SpotLight('#FFF4D8', 0, 46, 0.58, 0.42, 1.45);
-  private fog = new THREE.Fog('#D99A72', 10, 205);
+  private fog = new THREE.Fog('#A8C9D8', 10, 245);
 
   constructor(private scene: THREE.Scene, renderer: THREE.WebGLRenderer, camera: THREE.Camera) {
     configureCompressedTextures(renderer);
     scene.fog = this.fog;
-    this.sun.position.set(-75, 14, -42); this.sun.castShadow = true;
+    this.sun.position.set(-62, 38, -34); this.sun.castShadow = true;
     const shadowSize = this.touchLike ? 1024 : 2048; this.sun.shadow.mapSize.set(shadowSize, shadowSize);
     const sc = this.sun.shadow.camera; sc.left = sc.bottom = -145; sc.right = sc.top = 145; sc.near = 1; sc.far = 260; this.sun.shadow.bias = -0.0004;
     this.moon.position.set(35, 44, 28);
@@ -57,7 +58,17 @@ export class Lighting {
     this.hemi.intensity = nlerp(a.hemi, b.hemi, u); this.sun.intensity = nlerp(a.sun, b.sun, u); this.moon.intensity = nlerp(a.moon, b.moon, u); this.fog.far = nlerp(a.fogFar, b.fogFar, u); this.scene.environmentIntensity = nlerp(a.env, b.env, u);
   }
   private apply(): void {
-    if (this.t < 0.34) this.mixStage(SUNSET, GOLDEN, this.t / 0.34); else if (this.t < 0.72) this.mixStage(GOLDEN, BLUE, (this.t - 0.34) / 0.38); else this.mixStage(BLUE, NIGHT, (this.t - 0.72) / 0.28);
-    const horizon = THREE.MathUtils.clamp(this.t / 0.83, 0, 1); this.sun.position.y = nlerp(14, 0.8, horizon); this.sun.position.x = nlerp(-75, -96, horizon); this.sun.color.copy(C('#FFD8AA')).lerp(C('#FF8870'), Math.min(1, this.t * 1.25)); this.setShadows(this.t < (this.touchLike ? 0.62 : 0.8));
+    // Nine-minute Level 1 arc. The opening stays readable long enough to learn the camp, while the
+    // pink sunset remains a major visual beat instead of flashing past on the way to darkness.
+    if (this.t < 0.24) this.mixStage(DAY, SUNSET, this.t / 0.24);
+    else if (this.t < 0.58) this.mixStage(SUNSET, GOLDEN, (this.t - 0.24) / 0.34);
+    else if (this.t < 0.80) this.mixStage(GOLDEN, BLUE, (this.t - 0.58) / 0.22);
+    else this.mixStage(BLUE, NIGHT, (this.t - 0.80) / 0.20);
+
+    const horizon = THREE.MathUtils.clamp(this.t / 0.86, 0, 1);
+    this.sun.position.y = nlerp(38, 0.8, horizon); this.sun.position.x = nlerp(-62, -96, horizon);
+    const warm = THREE.MathUtils.smoothstep(this.t, .12, .70);
+    this.sun.color.copy(C('#FFF1C7')).lerp(C('#FF8870'), warm);
+    this.setShadows(this.t < (this.touchLike ? 0.68 : 0.84));
   }
 }
