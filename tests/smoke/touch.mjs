@@ -43,9 +43,12 @@ try {
 
   const controls = p.locator('.touch-controls');
   if (!(await controls.isVisible())) throw new Error('touch controls are not visible for iPad-style context');
-  for (const sel of ['.touch-move', '.touch-move-ring', '.touch-use', '.touch-jump', '.touch-sprint', '.touch-crouch', '.touch-flash', '.touch-glow', '.touch-map', '.touch-drop']) {
+  for (const sel of ['.touch-move', '.touch-use', '.touch-jump', '.touch-sprint', '.touch-crouch', '.touch-flash', '.touch-glow', '.touch-map', '.touch-drop']) {
     if (!(await p.locator(sel).isVisible())) throw new Error(`missing touch control ${sel}`);
   }
+  const moveRing = p.locator('.touch-move-ring');
+  if ((await moveRing.count()) !== 1) throw new Error('floating movement ring is missing from the DOM');
+  if (await moveRing.evaluate((el) => el.classList.contains('active'))) throw new Error('floating movement ring should be dormant before thumb-down');
 
   // The movement collider must be a broad thumb work-zone, not a tiny fixed joystick target.
   const pad = await p.locator('.touch-move').boundingBox();
@@ -83,8 +86,9 @@ try {
   const beforeMove = await p.evaluate(() => window.__cg.local());
   await p.locator('.touch-move').dispatchEvent('pointerdown', { pointerId: 51, pointerType: 'touch', clientX: cx, clientY: cy, isPrimary: true, bubbles: true });
   await p.waitForFunction(() => document.querySelector('.touch-move-ring')?.classList.contains('active'), null, { timeout: 1200 });
+  if (!(await moveRing.isVisible())) throw new Error('floating joystick did not become visible after thumb-down');
 
-  const ringCenter = await p.locator('.touch-move-ring').evaluate((el) => {
+  const ringCenter = await moveRing.evaluate((el) => {
     const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   });
   if (Math.hypot(ringCenter.x - cx, ringCenter.y - cy) > 12) throw new Error(`floating joystick did not appear under thumb: thumb=${cx},${cy} ring=${JSON.stringify(ringCenter)}`);
