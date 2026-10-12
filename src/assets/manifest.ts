@@ -1,25 +1,22 @@
-// Logical name -> imported model (relative to public/assets/). `h` / `w` normalise the model to metres.
+// Logical name -> imported environment/prop model (relative to public/assets/). `h` / `w` normalise to metres.
+// Player/camper presentation is intentionally NOT sourced here: src/game/campers.ts is the canonical
+// handmade SDF character system.
 export interface AssetDef { file: string; h?: number; w?: number; format?: 'glb' | 'fbx' }
 
 const k = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/${file}.glb`, format: 'glb', ...fit });
 const q = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/quaternius/${file}.fbx`, format: 'fbx', ...fit });
-const cg = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/quaternius/camp-characters/${file}.gltf`, format: 'glb', ...fit });
 const oa = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/openagents/${file}.glb`, format: 'glb', ...fit });
 const cc0 = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/cc0-camp-props/${file}.glb`, format: 'glb', ...fit });
 const CHARS = 'abcdefgh'.split('');
 
 export const MANIFEST = {
+  // Legacy blocky models remain addressable for backwards-compatible tests/debugging only. Gameplay
+  // counselors and rescued campers use the handmade SDF actors in src/game/campers.ts.
   ...Object.fromEntries(CHARS.map((c, i) => [`camper${i + 1}`, k(`blocky-characters/character-${c}`, { h: 1.7 })])),
-
   camperMale: q('Smooth_Male_Casual', { h: 1.28 }),
   camperFemale: q('Smooth_Female_Casual', { h: 1.24 }),
   counselorMale: q('Smooth_Male_Shirt', { h: 1.82 }),
   counselorFemale: q('Smooth_Female_Casual', { h: 1.74 }),
-  counselorMaleCasual: cg('male_casual2', { h: 1.82 }),
-  counselorMaleBeach: cg('male_beach', { h: 1.78 }),
-  counselorFemaleCasual: cg('female_casual', { h: 1.72 }),
-  camperMaleVariant: cg('male_farmer', { h: 1.30 }),
-  camperFemaleVariant: cg('female_adventurer', { h: 1.27 }),
 
   monster: k('graveyard/character-zombie', { h: 2.2 }),
   cabin: oa('log_cabin', { w: 8.0 }),
@@ -67,8 +64,6 @@ export type AssetName = keyof typeof MANIFEST;
 export const ALWAYS_PRELOAD: AssetName[] = [
   'table', 'chair', 'bookshelf', 'bedSingle', 'sink', 'teddy',
   'lantern', 'campfire', 'logs', 'crate', 'cooler', 'radio', 'mug', 'can', 'backpack', 'bucket', 'barrel', 'paddle',
-  'camperMale', 'camperFemale', 'counselorMale', 'counselorFemale',
-  'counselorMaleCasual', 'counselorMaleBeach', 'counselorFemaleCasual', 'camperMaleVariant', 'camperFemaleVariant',
   'cabin', 'shed', 'boathouse', 'trailShelter', 'lodge', 'groundBrush',
 ];
 export const HDRI_FILE = 'hdri/venice_sunset_1k.hdr';
