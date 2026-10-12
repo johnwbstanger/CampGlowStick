@@ -72,8 +72,6 @@ export class TouchControls {
     const map = button('MAP', 'touch-map', actions.map);
     const drop = button('DROP', 'touch-drop', actions.drop);
 
-    // Sprint is primarily controlled by pushing the movement stick into its outer band.
-    // This button is a toggle, not a hold, so the player never needs a three-finger claw grip.
     this.sprintButton = button('RUN', 'touch-sprint', () => {
       this.sprintLocked = !this.sprintLocked;
       this.sprintButton.classList.toggle('active', this.sprintLocked);
@@ -173,9 +171,9 @@ export class TouchControls {
     window.addEventListener('blur', () => this.endMove());
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.endMove(); });
 
-    // Old Safari fallback only. Modern iPadOS uses Pointer Events; registering both paths at once
-    // can double-fire gestures and is a major source of clunky/sticky controls.
-    if (!('PointerEvent' in window)) {
+    // Pointer Events are primary on modern iPadOS. Only install legacy TouchEvent listeners
+    // when the runtime truly lacks PointerEvent; typeof avoids TypeScript narrowing window to never.
+    if (typeof PointerEvent === 'undefined') {
       this.movePad.addEventListener('touchstart', (e) => {
         e.preventDefault(); e.stopPropagation();
         const t = e.changedTouches[0]; if (!t || this.touchMoveIdentifier >= 0) return;
@@ -235,7 +233,7 @@ export class TouchControls {
     this.lookPad.addEventListener('pointercancel', (e) => { if (e.pointerId === this.lookId) { this.lookId = -1; this.lookMoved = false; } }, { passive: false });
     this.lookPad.addEventListener('lostpointercapture', (e) => { if (e.pointerId === this.lookId) { this.lookId = -1; this.lookMoved = false; } });
 
-    if (!('PointerEvent' in window)) {
+    if (typeof PointerEvent === 'undefined') {
       this.lookPad.addEventListener('touchstart', (e) => {
         e.preventDefault();
         const t = e.changedTouches[0]; if (!t || this.touchLookIdentifier >= 0) return;
