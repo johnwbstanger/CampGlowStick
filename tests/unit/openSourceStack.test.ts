@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MANIFEST } from '../../src/assets/manifest';
+import { CABINS } from '../../src/game/campPlan';
 import { buildLayout } from '../../src/game/layout';
 import { findPath } from '../../src/game/navigation';
 import { chooseCamperHides } from '../../src/game/camperSpawns';
@@ -29,13 +30,12 @@ describe('imported open-source world stack', () => {
     expect(MANIFEST.groundBrush.file).toContain('nature/ground_grass.glb');
   });
 
-  it('parents bunks to cabin interiors and keeps private socks out of outdoor world scatter', () => {
+  it('parents bunks to sleeping-cabin interiors and keeps private socks out of outdoor world scatter', () => {
     const layout = buildLayout(12345, 3);
-    const cabins = layout.statics.filter((s) => s.name === 'cabin');
     const bunks = layout.statics.filter((s) => s.name === 'bunk');
-    expect(cabins.length).toBeGreaterThan(8);
-    expect(bunks.length).toBe(cabins.length * 4);
-    expect(bunks.every((b) => cabins.some((c) => Math.hypot(b.x - c.x, b.z - c.z) < 3.3))).toBe(true);
+    expect(CABINS.length).toBeGreaterThan(8);
+    expect(bunks.length).toBe(CABINS.length * 4);
+    expect(bunks.every((b) => CABINS.some(([x, z]) => Math.hypot(b.x - x, b.z - z) < 3.3))).toBe(true);
     expect(layout.items.some((s) => s.model === 'sock')).toBe(false);
   });
 
