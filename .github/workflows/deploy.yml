@@ -28,6 +28,8 @@ jobs:
       - run: npm ci
       - name: Fetch pinned CC0 game assets
         run: npm run fetch-assets
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - run: npm run build
         env:
           VITE_BASE: /${{ github.event.repository.name }}/
@@ -54,6 +56,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run fetch-assets
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - run: npx playwright install --with-deps chromium
       - name: 3-client gameplay, voice, reconnect, replay and extraction
         run: npm run smoke
@@ -91,8 +95,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run fetch-assets
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - run: npx playwright install --with-deps chromium
-      - name: iPad-style controls, movement, jump and USE
+      - name: iPad-style controls, movement, jump, multitouch ownership and USE
         run: npm run smoke:touch
         env:
           SMOKE_LOCAL_PEER: '1'
