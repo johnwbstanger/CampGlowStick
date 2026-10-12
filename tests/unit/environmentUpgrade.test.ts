@@ -63,6 +63,20 @@ describe('imported world-stack replacement', () => {
     expect(Math.hypot(last.x - CAMP_PLAN.extraction.x, last.z - CAMP_PLAN.extraction.z)).toBeLessThan(.1);
   });
 
+  it('authors multiple unstable dynamic clutter towers that can cascade into the noise system', () => {
+    const layout = buildLayout(855193, 3);
+    const elevated = layout.items.filter((item) => (item.lift ?? 0) > 0.5);
+    expect(elevated.length).toBeGreaterThanOrEqual(12);
+    expect(Math.max(...elevated.map((item) => item.lift ?? 0))).toBeGreaterThan(1.4);
+
+    const stackCenters = [[105, 116], [111, 122], [-42, 16], [-31, -124], [35, -31]];
+    for (const [x, z] of stackCenters) {
+      const nearby = layout.items.filter((item) => Math.hypot(item.x - x, item.z - z) < .5);
+      expect(nearby.length).toBeGreaterThanOrEqual(4);
+      expect(nearby.some((item) => (item.lift ?? 0) > 1)).toBe(true);
+    }
+  });
+
   it('uses actual imported camp props instead of the old crate/bedroll stand-ins', () => {
     expect(MANIFEST.cooler.file).toContain('cc0-camp-props/cooler.glb');
     expect(MANIFEST.backpack.file).toContain('cc0-camp-props/backpack.glb');
