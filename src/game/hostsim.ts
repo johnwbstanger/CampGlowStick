@@ -9,6 +9,7 @@ import { chooseCamperHides } from './camperSpawns';
 import { advanceBoardingStage, boardingTarget, type BoardingStage } from './busBoarding';
 import { GLOW_MASS, propInfo } from './items';
 import type { Layout } from './layout';
+import { findPath, navLineClear, type NavPoint } from './navigation';
 import { newMonster, stepMonster } from './monster';
 import { NoiseBus, VOLUME, impactVolume, stepVolume, type Noise, type NoiseSource } from './noise';
 import { terrainHeight, terrainHeightfieldData } from './terrain';
@@ -23,6 +24,7 @@ interface SimItem {
 interface SimCamper {
   id: number; x: number; y: number; z: number; vx: number; vz: number;
   foundBy: number; rescued: boolean; boardingStage: BoardingStage; seatIndex: number;
+  route: NavPoint[]; routeGoalX: number; routeGoalZ: number; routeAt: number;
 }
 export interface Sizes { get(model: string): { x: number; y: number; z: number } | undefined }
 
@@ -66,8 +68,6 @@ export class HostSim {
     this.world.defaultContactMaterial.contactEquationStiffness = 1e7;
     this.world.defaultContactMaterial.contactEquationRelaxation = 4;
 
-    // Dynamic props now collide with exactly the same authored terrain sampled by the renderer,
-    // players and NPCs. Cannon's local +Y maps to world -Z after the standard -90° X rotation.
     const sampled = terrainHeightfieldData(96);
     const groundShape = new CANNON.Heightfield(sampled.data, { elementSize: sampled.elementSize });
     const ground = new CANNON.Body({ type: CANNON.Body.STATIC });
@@ -98,6 +98,7 @@ export class HostSim {
       this.campers.set(i, {
         id: i, x, y: terrainHeight(x, z, layout), z, vx: 0, vz: 0,
         foundBy: -1, rescued: false, boardingStage: -1, seatIndex: i,
+        route: [], routeGoalX: x, routeGoalZ: z, routeAt: -Infinity,
       });
     }
     net.onHostMessage = (from, msg) => this.handle(from, msg);
@@ -227,7 +228,7 @@ export class HostSim {
       if (d < bd && (d < 1.15 || facing > 0.35)) { best = c; bd = d; }
     }
     if (!best) return false;
-    best.foundBy = id; best.vx = best.vz = 0; best.boardingStage = -1;
+    best.foundBy = id; best.vx = best.vz = 0; best.boardingStage = -1; best.route = []; best.routeAt = -Infinity;
     this.noise(best.x, best.z, 0.8, 'step', 'interaction'); return true;
   }
 
@@ -242,15 +243,24 @@ export class HostSim {
     if (best) this.hold(id, pl, best);
   }
 
+  /** Ported from Camp_Snallygaster PhysicalProps: held items stay dynamic and are spring-driven. */
   private hold(id: number, pl: SimPlayer, it: SimItem): void {
-    it.holder = id; pl.state.held = it.def.id; it.body.type = CANNON.Body.KINEMATIC; it.body.mass = 0; it.body.updateMassProperties();
-    it.body.velocity.setZero(); it.body.angularVelocity.setZero(); this.noise(it.body.position.x, it.body.position.z, 0.6, it.def.mat === 'glass' ? 'plastic' : it.def.mat, 'interaction');
+    it.holder = id;
+    pl.state.held = it.def.id;
+    it.body.type = CANNON.Body.DYNAMIC;
+    it.body.mass = it.mass;
+    it.body.updateMassProperties();
+    it.body.allowSleep = false;
+    it.body.velocity.setZero();
+    it.body.angularVelocity.scale(0.35, it.body.angularVelocity);
+    it.body.wakeUp();
+    this.noise(it.body.position.x, it.body.position.z, 0.6, it.def.mat === 'glass' ? 'plastic' : it.def.mat, 'interaction');
   }
 
   private release(id: number, thrown: boolean, force = 0.35): void {
     const pl = this.players.get(id); if (!pl || pl.state.held < 0) return;
     const it = this.items.get(pl.state.held); pl.state.held = -1; if (!it) return;
-    it.holder = -1; it.body.type = CANNON.Body.DYNAMIC; it.body.mass = it.mass; it.body.updateMassProperties(); it.body.wakeUp();
+    it.holder = -1; it.body.type = CANNON.Body.DYNAMIC; it.body.mass = it.mass; it.body.updateMassProperties(); it.body.allowSleep = true; it.body.wakeUp();
     const [vx, vy, vz] = releaseVelocity(pl.state.yaw, pl.state.pitch, force, it.mass, thrown);
     it.body.velocity.set(vx, vy, vz);
     if (thrown) {
@@ -277,9 +287,25 @@ export class HostSim {
     if (c.rescued) return;
     const [x, z] = boardingTarget(this.busPlacement(), 2, c.seatIndex);
     c.x = x; c.z = z; c.y = terrainHeight(c.x, c.z, this.layout) + 0.18;
-    c.vx = c.vz = 0; c.boardingStage = 2;
+    c.vx = c.vz = 0; c.route = []; c.boardingStage = 2;
     c.rescued = true; c.foundBy = -1; this.rescued++;
     this.noise(c.x, c.z, 0.7, 'step', 'interaction');
+  }
+
+  /** Reuses the imported MIT A* core only when direct escort movement is obstructed. */
+  private routedCamperTarget(c: SimCamper, goalX: number, goalZ: number): [number, number] {
+    const start = { x: c.x, z: c.z }, goal = { x: goalX, z: goalZ };
+    if (navLineClear(start, goal, this.colliders, .24)) {
+      c.route = []; c.routeGoalX = goalX; c.routeGoalZ = goalZ; return [goalX, goalZ];
+    }
+    const moved = Math.hypot(goalX - c.routeGoalX, goalZ - c.routeGoalZ) > 3.25;
+    if (!c.route.length || moved || this.time - c.routeAt > .8) {
+      c.route = findPath(c.x, c.z, goalX, goalZ, this.colliders, .24, 4.5);
+      c.routeGoalX = goalX; c.routeGoalZ = goalZ; c.routeAt = this.time;
+    }
+    while (c.route.length > 1 && Math.hypot(c.route[0].x - c.x, c.route[0].z - c.z) < .72) c.route.shift();
+    const waypoint = c.route[0];
+    return waypoint ? [waypoint.x, waypoint.z] : [goalX, goalZ];
   }
 
   private stepCampers(dt: number): void {
@@ -290,14 +316,14 @@ export class HostSim {
     for (const c of this.campers.values()) {
       if (c.rescued || c.foundBy < 0) continue;
       const pl = this.players.get(c.foundBy);
-      if (!pl || !pl.alive) { c.foundBy = -1; c.vx = c.vz = 0; c.boardingStage = -1; continue; }
+      if (!pl || !pl.alive) { c.foundBy = -1; c.vx = c.vz = 0; c.boardingStage = -1; c.route = []; continue; }
 
       const px = pl.state.p[0], pz = pl.state.p[2];
       const camperToPlayer = Math.hypot(px - c.x, pz - c.z);
-      let tx: number, tz: number, speed: number, stopRadius = .08;
+      let goalX: number, goalZ: number, speed: number, stopRadius = .08;
 
       if (c.boardingStage >= 0) {
-        [tx, tz] = boardingTarget(this.busPlacement(), c.boardingStage, c.seatIndex);
+        [goalX, goalZ] = boardingTarget(this.busPlacement(), c.boardingStage, c.seatIndex);
         speed = CAMPER_BOARD_SPEED;
         stopRadius = .34;
       } else {
@@ -306,27 +332,30 @@ export class HostSim {
         const plan = followerPlan(slot, counts.get(c.foundBy) ?? 1, camperToPlayer, pl.state.sprint, pl.state.moving);
         const [fx, fz] = this.forward(pl);
         const heading = Math.atan2(fx, fz);
-        tx = px + Math.sin(heading + plan.angle) * plan.radius;
-        tz = pz + Math.cos(heading + plan.angle) * plan.radius;
+        goalX = px + Math.sin(heading + plan.angle) * plan.radius;
+        goalZ = pz + Math.cos(heading + plan.angle) * plan.radius;
         speed = plan.speed;
         stopRadius = plan.stopRadius;
         if (this.inBusZone(px, pz) && camperToPlayer < 6.5) {
           c.boardingStage = 0;
-          [tx, tz] = boardingTarget(this.busPlacement(), 0, c.seatIndex);
+          [goalX, goalZ] = boardingTarget(this.busPlacement(), 0, c.seatIndex);
           speed = CAMPER_BOARD_SPEED;
           stopRadius = .34;
         }
       }
 
-      const dx = tx - c.x, dz = tz - c.z, d = Math.hypot(dx, dz);
-      if (d <= stopRadius) {
+      const goalD = Math.hypot(goalX - c.x, goalZ - c.z);
+      if (goalD <= stopRadius) {
         if (c.boardingStage >= 0) {
-          const next = advanceBoardingStage(c.boardingStage, d);
+          const next = advanceBoardingStage(c.boardingStage, goalD);
           if (c.boardingStage === 2 && next === 2) { this.finishBoarding(c); continue; }
+          if (next !== c.boardingStage) c.route = [];
           c.boardingStage = next;
         }
         [c.vx, c.vz] = steeringVelocity(0, 0, 0, c.vx, c.vz, dt);
       } else {
+        const [tx, tz] = this.routedCamperTarget(c, goalX, goalZ);
+        const dx = tx - c.x, dz = tz - c.z;
         [c.vx, c.vz] = steeringVelocity(dx, dz, speed, c.vx, c.vz, dt);
       }
 
@@ -339,7 +368,8 @@ export class HostSim {
     }
   }
 
-  private heldPose(pl: SimPlayer, it: SimItem): void {
+  /** Mass-aware spring grab ported from the previous PhysicalProps implementation. */
+  private heldPose(pl: SimPlayer, it: SimItem, dt: number): void {
     const s = pl.state;
     const eye = s.crouch ? PLAYER.crouchEye : PLAYER.eye;
     const isGun = it.def.model === 'directorGun';
@@ -348,9 +378,23 @@ export class HostSim {
       right: isGun ? .20 : .08,
       down: isGun ? .34 : .43,
     });
-    it.body.position.set(...pose.position);
+    const [tx, ty, tz] = pose.position;
+    const dx = tx - it.body.position.x, dy = ty - it.body.position.y, dz = tz - it.body.position.z;
+    const massFactor = Math.min(1.25, 1.35 / Math.sqrt(Math.max(it.mass, .35)));
+    const gain = Math.min(22, (11 + dt * 60) * massFactor);
+    it.body.velocity.x += dx * gain * dt;
+    it.body.velocity.y += dy * gain * dt;
+    it.body.velocity.z += dz * gain * dt;
+    const speed = Math.hypot(it.body.velocity.x, it.body.velocity.y, it.body.velocity.z);
+    const maxSpeed = 11 * Math.min(1, 1.5 / Math.sqrt(Math.max(it.mass, .5)) + .28);
+    if (speed > maxSpeed) {
+      const scale = maxSpeed / speed;
+      it.body.velocity.x *= scale; it.body.velocity.y *= scale; it.body.velocity.z *= scale;
+    }
+    // Keep first-person orientation readable while translation remains fully dynamic/colliding.
     it.body.quaternion.setFromEuler(pose.euler[0], pose.euler[1], pose.euler[2], 'YXZ');
-    it.body.velocity.setZero(); it.body.angularVelocity.setZero();
+    it.body.angularVelocity.scale(.9, it.body.angularVelocity);
+    it.body.wakeUp();
   }
 
   step(dt: number): void {
@@ -360,7 +404,7 @@ export class HostSim {
       const s = pl.state;
       if (pl.alive && (pl.stepT -= dt) <= 0) { const v = stepVolume(s.moving, s.crouch, s.sprint); if (v > 0) this.noise(s.p[0], s.p[2], v, 'step', 'step'); pl.stepT = s.sprint ? 0.3 : 0.5; }
       const it = s.held >= 0 ? this.items.get(s.held) : undefined;
-      if (it) this.heldPose(pl, it);
+      if (it) this.heldPose(pl, it, dt);
       else if (s.held >= 0) s.held = -1;
     }
     this.stepCampers(dt);
