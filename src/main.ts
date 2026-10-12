@@ -1,4 +1,5 @@
 import './ui/style.css';
+import './ui/touchProfessional.css';
 import './game/camperPresentationFix';
 import { click } from './audio/synth';
 import { Voice } from './audio/voice';
@@ -38,59 +39,43 @@ function toMenu(error?: NetErrorKind | string): void {
 
 function enterLobby(s: Session): void {
   session = s;
-  // The browser smoke suite runs on localhost and needs to close exactly one data transport to
-  // exercise the production reconnect path. Never expose the session object on deployed Pages.
-  if (location.hostname === '127.0.0.1' || location.hostname === 'localhost') window.__cgSession = s;
-  click();
-  let voice: Voice | null = null;
-  s.onClosed = (kind) => toMenu(kind);
-  const buffered: Msg[] = [];
-  let starting = false;
-
-  const launch = async (msg: Extract<Msg, { t: 'start' }>, v: Voice | null, showBriefing: boolean): Promise<void> => {
-    if (showBriefing) await showArrivalBriefing(root);
-    const ui = showLoading(root);
-    const [{ Game }] = await Promise.all([import('./game/game'), new Promise((r) => setTimeout(r, showBriefing ? 650 : 180))]);
-    try {
-      const g = await Game.create(root, s, msg, ui.progress, (next) => {
-        game?.dispose();
-        game = null;
-        void launch(next, v, false);
-      });
-      if (v) g.voice = v;
-      game = g;
-      s.onRoster = (players) => { for (const id of [...g.remotes.keys()]) if (!players.some((p) => p.id === id)) g.removeRemote(id); };
-      for (const m of buffered.splice(0)) g.handle(m);
-    } catch (e) {
-      console.error('failed to start game', e);
-      toMenu('Could not start the game: ' + (e instanceof Error ? e.message : String(e)));
-    }
-  };
-
-  s.onMessage = (msg) => {
-    if (msg.t !== 'start') return;
-    if (starting) return;
-    starting = true;
-    s.onMessage = (m) => { if (game) game.handle(m); else buffered.push(m); };
-    void launch(msg, voice, true);
-  };
-
-  showLobby(root, s, {
-    onStart: () => {
-      if (!s.isHost || !s.everyoneReady) return;
-      const seed = Math.floor(Math.random() * 1e9);
-      s.started = true;
-      s.broadcast({ t: 'start', seed, need: 3 });
-    },
+  window.__cgSession = s;
+  const ui = showLobby(root, s, {
     onLeave: () => toMenu(),
+    onStart: () => s.start(),
     onVoice: async (on) => {
-      if (!on) { voice?.disable(); return; }
-      voice ??= new Voice(s);
-      const ok = await voice.enable();
-      const box = document.getElementById('voice-toggle') as HTMLInputElement | null;
-      if (!ok && box) { box.checked = false; box.title = 'Microphone unavailable'; }
+      if (!on) { await s.voice?.disable(); ui.render(); return; }
+      if (!s.voice) s.voice = new Voice(s);
+      await s.voice.enable(); ui.render();
     },
   });
+  s.onLobbyChange = () => ui.render();
+  s.onNetError = (kind) => { if (kind === 'host-left' || kind === 'disconnected') toMenu(kind); else ui.setError(kind); };
+  s.onStart = (start) => startGame(start);
+  ui.render();
 }
 
+async function startGame(start: Extract<Msg, { t: 'start' }>): Promise<void> {
+  if (!session) return;
+  showArrivalBriefing(root, () => void loadGame(start));
+}
+
+async function loadGame(start: Extract<Msg, { t: 'start' }>): Promise<void> {
+  if (!session) return;
+  const loading = showLoading(root);
+  try {
+    const { Game } = await import('./game/game');
+    game?.dispose();
+    game = await Game.create(root, session, start, loading.progress, (next) => void startGame(next));
+    game.voice = session.voice;
+    session.onHostMessage = (from, msg) => game?.sim?.handle(from, msg);
+    session.onMessage = (msg) => game?.handle(msg);
+    session.onPlayerLeft = (id) => game?.removeRemote(id);
+  } catch (e) {
+    console.error(e);
+    toMenu('loading');
+  }
+}
+
+document.addEventListener('pointerdown', () => click(), { once: true });
 toMenu();
