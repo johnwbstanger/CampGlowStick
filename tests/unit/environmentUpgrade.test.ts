@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { MANIFEST } from '../../src/assets/manifest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { MANIFEST, ALWAYS_PRELOAD } from '../../src/assets/manifest';
 import { CABINS, CAMP_PLAN } from '../../src/game/campPlan';
 import { WORLD_HALF } from '../../src/game/constants';
 import { buildLayout } from '../../src/game/layout';
@@ -36,7 +38,6 @@ describe('imported world-stack replacement', () => {
     expect(data).toHaveLength(25);
     expect(data[0]).toHaveLength(25);
     expect(elementSize).toBeCloseTo((WORLD_HALF * 2) / 24);
-    // Heightfield local +Y becomes world -Z after the host's -90° X rotation.
     expect(data[0][0]).toBeCloseTo(terrainHeight(-WORLD_HALF, WORLD_HALF), 6);
     expect(data[24][24]).toBeCloseTo(terrainHeight(WORLD_HALF, -WORLD_HALF), 6);
   });
@@ -67,10 +68,14 @@ describe('imported world-stack replacement', () => {
     expect(MANIFEST.backpack.file).toContain('cc0-camp-props/backpack.glb');
   });
 
-  it('keeps multiple imported counselor and camper bodies available', () => {
-    expect(MANIFEST.counselorMaleCasual.file).toContain('camp-characters');
-    expect(MANIFEST.counselorFemaleCasual.file).toContain('camp-characters');
-    expect(MANIFEST.camperMaleVariant.file).toContain('camp-characters');
-    expect(MANIFEST.camperFemaleVariant.file).toContain('camp-characters');
+  it('keeps the handmade SDF campers and counselors canonical', () => {
+    const source = readFileSync(join(__dirname, '../../src/game/campers.ts'), 'utf8');
+    const counselors = readFileSync(join(__dirname, '../../src/game/counselors.ts'), 'utf8');
+    expect(source).toContain('User-supplied SDF character system');
+    expect(source).toContain('function polygonize');
+    expect(source).toContain('buildCamper');
+    expect(source).toContain('poseCamper');
+    expect(counselors).toContain("from './campers'");
+    expect(ALWAYS_PRELOAD.some((name) => /camper|counselor/i.test(name))).toBe(false);
   });
 });
