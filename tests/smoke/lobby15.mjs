@@ -26,9 +26,19 @@ async function page(name) {
   return p;
 }
 
+async function closePreview(): Promise<void> {
+  localPeer?.close?.();
+  server.httpServer.closeIdleConnections?.();
+  server.httpServer.closeAllConnections?.();
+  await Promise.race([
+    new Promise((resolve) => server.httpServer.close(() => resolve(undefined))),
+    new Promise((resolve) => setTimeout(resolve, 1200)),
+  ]);
+  server.httpServer.unref?.();
+}
+
 try {
   const host = await page('Host');
-  // menu cap input defaults to the production maximum; set it explicitly when available.
   const cap = host.locator('input[type="number"]');
   if (await cap.count()) await cap.fill('15');
   await host.click('#btn-host');
@@ -60,6 +70,5 @@ try {
 } finally {
   await Promise.all(contexts.map((c) => c.close().catch(() => undefined)));
   await browser.close().catch(() => undefined);
-  await new Promise((resolve) => server.httpServer.close(resolve));
-  localPeer?.close?.();
+  await closePreview();
 }
