@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DAY_SECONDS } from '../../src/game/constants';
 import { NoiseBus, falloff } from '../../src/game/noise';
-import { MONSTER, newMonster, stepMonster } from '../../src/game/monster';
+import { MONSTER, inMonsterView, newMonster, stepMonster } from '../../src/game/monster';
 import { resolveCapsule } from '../../src/game/colliders';
 import { moveCapsuleSwept } from '../../src/game/physics';
 import { lerpAngle } from '../../src/game/interp';
@@ -23,6 +23,20 @@ describe('noise + monster', () => {
     expect(bus.loudest(0, 0, 0)?.noise.x).toBe(-5);
     bus.prune(100);
     expect(bus.events.length).toBe(0);
+  });
+
+  it('uses a forward visual cone but notices extremely close movement', () => {
+    const m = newMonster(0, 0); // yaw 0 faces +Z
+    expect(inMonsterView(m, { id: 1, x: 0, z: 10, crouch: false, alive: true })).toBe(true);
+    expect(inMonsterView(m, { id: 2, x: 0, z: -10, crouch: false, alive: true })).toBe(false);
+    expect(inMonsterView(m, { id: 3, x: 0, z: -1.5, crouch: false, alive: true })).toBe(true);
+  });
+
+  it('does not visually acquire a quiet player standing behind it', () => {
+    const bus = new NoiseBus(), m = newMonster(0, 0);
+    stepMonster(m, 0.1, 0.1, bus, [{ id: 9, x: 0, z: -6, crouch: false, alive: true }], true);
+    expect(m.mode).not.toBe('chase');
+    expect(m.mode).not.toBe('stalk');
   });
 
   it('listens, investigates the loudest noise, and catches visible prey', () => {

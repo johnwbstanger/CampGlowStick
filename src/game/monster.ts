@@ -16,6 +16,10 @@ export interface Prey { id: number; x: number; z: number; crouch: boolean; alive
 export const MONSTER = {
   sight: 18,
   sightCrouch: 8.5,
+  /** 140° total visual cone; sound remains omnidirectional. */
+  fovCos: Math.cos(70 * Math.PI / 180),
+  /** Very close movement can be noticed even outside the forward cone. */
+  closeAwareness: 2.6,
   catchDist: 1.15,
   wanderSpeed: 1.8,
   investigateSpeed: 3.2,
@@ -70,6 +74,14 @@ function hasLineOfSight(m: MonsterState, p: Prey, colliders: Box[]): boolean {
   return true;
 }
 
+export function inMonsterView(m: MonsterState, p: Prey, distance = Math.hypot(p.x - m.x, p.z - m.z)): boolean {
+  if (distance <= MONSTER.closeAwareness) return true;
+  if (distance <= 1e-6) return true;
+  const dx = (p.x - m.x) / distance, dz = (p.z - m.z) / distance;
+  const fx = Math.sin(m.yaw), fz = Math.cos(m.yaw);
+  return dx * fx + dz * fz >= MONSTER.fovCos;
+}
+
 function rawMove(m: MonsterState, tx: number, tz: number, speed: number, dt: number, colliders: Box[]): number {
   const dx = tx - m.x, dz = tz - m.z, d = Math.hypot(dx, dz);
   if (d <= 0.01) return d;
@@ -115,8 +127,8 @@ function setTarget(m: MonsterState, x: number, z: number): void {
 
 /**
  * Perception-driven extraction-horror hunter using the imported YUKA FSM transition model.
- * It does not know player coordinates unless line-of-sight is clear. Otherwise it reacts to world-noise
- * positions, last-seen memory and local search targets.
+ * It only visually acquires players inside its forward FOV (or at extremely close range) with clear LOS.
+ * Otherwise it reacts to omnidirectional world-noise, last-seen memory and local search targets.
  */
 export function stepMonster(
   m: MonsterState,
@@ -145,7 +157,7 @@ export function stepMonster(
     if (d < nd) { nd = d; nearest = p; }
   }
 
-  const visible = !!nearest && nd < (nearest.crouch ? crouchSight : sight) && hasLineOfSight(m, nearest, colliders);
+  const visible = !!nearest && nd < (nearest.crouch ? crouchSight : sight) && inMonsterView(m, nearest, nd) && hasLineOfSight(m, nearest, colliders);
   if (nearest && nd < MONSTER.catchDist && visible) {
     mode(m, 'attack'); m.fsm.update(); return nearest.id;
   }
@@ -172,7 +184,6 @@ export function stepMonster(
   if (m.memory > 0) {
     m.memory -= dt;
     if (m.mode === 'chase' || m.mode === 'stalk') {
-      // Reacquire is a brief committed rush to the exact last-visible point, not omniscient pursuit.
       mode(m, 'reacquire'); m.timer = 1.35; setTarget(m, m.lastSeenX, m.lastSeenZ);
     }
   }

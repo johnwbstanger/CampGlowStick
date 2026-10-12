@@ -1,4 +1,5 @@
 import * as CANNON from 'cannon-es';
+import { ballisticLineClear } from './ballistics';
 import type { Session } from '../net/session';
 import type { CamperSnap, GameSnap, ItemDef, ItemSnap, Msg, PlayerState } from '../net/protocol';
 import { resolveCapsule, type Box } from './colliders';
@@ -190,16 +191,15 @@ export class HostSim {
     const eye = pl.state.crouch ? PLAYER.crouchEye : PLAYER.eye;
     const ox = pl.state.p[0], oy = pl.state.p[1] + eye - 0.08, oz = pl.state.p[2];
     const [fx, fy, fz] = viewForward(pl.state.yaw, pl.state.pitch);
+    const shotRay = { x: ox, y: oy, z: oz, dx: fx, dy: fy, dz: fz };
     this.noise(ox, oz, VOLUME.crash, 'metal', 'gunshot');
 
-    // Chest point must follow the sculpted terrain. The old fixed 1.35m world Y made uphill/downhill
-    // shots disagree with the visible creature even when the barrel/camera orientation was correct.
     const monsterChestY = terrainHeight(this.monster.x, this.monster.z, this.layout) + 1.35;
     const mdx = this.monster.x - ox, mdy = monsterChestY - oy, mdz = this.monster.z - oz;
     const malong = mdx * fx + mdy * fy + mdz * fz;
     const mx = mdx - fx * malong, my = mdy - fy * malong, mz = mdz - fz * malong;
     const mperp = Math.hypot(mx, my, mz);
-    if (malong > 0 && malong < 42 && mperp < Math.max(0.75, malong * 0.028)) {
+    if (malong > 0 && malong < 42 && mperp < Math.max(0.75, malong * 0.028) && ballisticLineClear(shotRay, malong, this.colliders)) {
       this.monsterStunnedUntil = Math.max(this.monsterStunnedUntil, this.time + 7.5);
       this.monster.x += fx * 2.2; this.monster.z += fz * 2.2;
       this.monster.mode = 'search'; this.monster.timer = 2.5;
@@ -210,7 +210,7 @@ export class HostSim {
       if (it === gun || it.holder >= 0) continue;
       const dx = it.body.position.x - ox, dy = it.body.position.y - oy, dz = it.body.position.z - oz;
       const along = dx * fx + dy * fy + dz * fz;
-      if (along <= 0 || along >= 35 || along >= bestAlong) continue;
+      if (along <= 0 || along >= 35 || along >= bestAlong || !ballisticLineClear(shotRay, along, this.colliders)) continue;
       const px = dx - fx * along, py = dy - fy * along, pz = dz - fz * along;
       const hitRadius = Math.max(0.22, Math.min(0.75, Math.hypot(it.halfX, it.halfY, it.halfZ) * 0.7));
       if (Math.hypot(px, py, pz) <= hitRadius) { hit = it; bestAlong = along; }
@@ -395,7 +395,6 @@ export class HostSim {
       const scale = maxSpeed / speed;
       it.body.velocity.x *= scale; it.body.velocity.y *= scale; it.body.velocity.z *= scale;
     }
-    // Keep first-person orientation readable while translation remains fully dynamic/colliding.
     it.body.quaternion.setFromEuler(pose.euler[0], pose.euler[1], pose.euler[2], 'YXZ');
     it.body.angularVelocity.scale(.9, it.body.angularVelocity);
     it.body.wakeUp();
