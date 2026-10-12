@@ -164,15 +164,14 @@ export class TouchControls {
     this.movePad.addEventListener('pointermove', movePointer, { passive: false });
     this.movePad.addEventListener('pointerup', endPointer, { passive: false });
     this.movePad.addEventListener('pointercancel', endPointer, { passive: false });
-    this.movePad.addEventListener('lostpointercapture', (e) => { if (e.pointerId === this.moveId) this.endMove(); });
+    // Deliberately do NOT stop on lostpointercapture. iPad Safari can drop capture over WebGL;
+    // the window listeners below keep the same owning pointer moving until its real up/cancel.
     window.addEventListener('pointermove', movePointer, { passive: false });
     window.addEventListener('pointerup', endPointer, { passive: false });
     window.addEventListener('pointercancel', endPointer, { passive: false });
     window.addEventListener('blur', () => this.endMove());
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.endMove(); });
 
-    // Pointer Events are primary on modern iPadOS. Only install legacy TouchEvent listeners
-    // when the runtime truly lacks PointerEvent; typeof avoids TypeScript narrowing window to never.
     if (typeof PointerEvent === 'undefined') {
       this.movePad.addEventListener('touchstart', (e) => {
         e.preventDefault(); e.stopPropagation();
@@ -219,19 +218,41 @@ export class TouchControls {
     this.lookMoved = false;
   }
 
+  private cancelLook(): void {
+    this.lookId = -1;
+    this.touchLookIdentifier = -1;
+    this.lookMoved = false;
+  }
+
   private bindLook(): void {
+    const movePointer = (e: PointerEvent) => {
+      if (e.pointerId !== this.lookId) return;
+      e.preventDefault();
+      this.moveLook(e.clientX, e.clientY);
+    };
+    const endPointer = (e: PointerEvent) => {
+      if (e.pointerId !== this.lookId) return;
+      e.preventDefault();
+      this.endLook();
+    };
+    const cancelPointer = (e: PointerEvent) => {
+      if (e.pointerId !== this.lookId) return;
+      this.cancelLook();
+    };
+
     this.lookPad.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       if (this.lookId >= 0) return;
       this.beginLook(e.pointerId, e.clientX, e.clientY);
       try { this.lookPad.setPointerCapture(e.pointerId); } catch {}
     }, { passive: false });
-    this.lookPad.addEventListener('pointermove', (e) => {
-      if (e.pointerId === this.lookId) { e.preventDefault(); this.moveLook(e.clientX, e.clientY); }
-    }, { passive: false });
-    this.lookPad.addEventListener('pointerup', (e) => { if (e.pointerId === this.lookId) { e.preventDefault(); this.endLook(); } }, { passive: false });
-    this.lookPad.addEventListener('pointercancel', (e) => { if (e.pointerId === this.lookId) { this.lookId = -1; this.lookMoved = false; } }, { passive: false });
-    this.lookPad.addEventListener('lostpointercapture', (e) => { if (e.pointerId === this.lookId) { this.lookId = -1; this.lookMoved = false; } });
+    this.lookPad.addEventListener('pointermove', movePointer, { passive: false });
+    this.lookPad.addEventListener('pointerup', endPointer, { passive: false });
+    this.lookPad.addEventListener('pointercancel', cancelPointer, { passive: false });
+    // Same capture-loss rule as movement: keep tracking the owning pointer at window scope.
+    window.addEventListener('pointermove', movePointer, { passive: false });
+    window.addEventListener('pointerup', endPointer, { passive: false });
+    window.addEventListener('pointercancel', cancelPointer, { passive: false });
 
     if (typeof PointerEvent === 'undefined') {
       this.lookPad.addEventListener('touchstart', (e) => {
@@ -248,7 +269,7 @@ export class TouchControls {
       this.lookPad.addEventListener('touchend', (e) => {
         if ([...e.changedTouches].some((x) => x.identifier === this.touchLookIdentifier)) { e.preventDefault(); this.endLook(); }
       }, { passive: false });
-      this.lookPad.addEventListener('touchcancel', () => { this.touchLookIdentifier = -1; this.lookMoved = false; }, { passive: false });
+      this.lookPad.addEventListener('touchcancel', () => this.cancelLook(), { passive: false });
     }
   }
 
