@@ -1,5 +1,5 @@
 // iPad-style touch smoke. Chromium is not Safari, but this proves the touch-only control surface
-// drives movement, jump, multitouch pointer ownership and USE without keyboard events or pointer lock.
+// drives movement, jump, multitouch pointer ownership, map close/back behavior and USE without keyboard events or pointer lock.
 import { existsSync } from 'node:fs';
 import { chromium } from 'playwright';
 import { build, preview } from 'vite';
@@ -45,6 +45,19 @@ try {
   for (const sel of ['.touch-move', '.touch-use', '.touch-jump', '.touch-sprint', '.touch-crouch', '.touch-flash', '.touch-glow', '.touch-map', '.touch-drop']) {
     if (!(await p.locator(sel).isVisible())) throw new Error(`missing touch control ${sel}`);
   }
+
+  // Map/overlay must be reversible on an iPad with no keyboard attached.
+  const mapButton = p.locator('.touch-map');
+  const mb = await mapButton.boundingBox();
+  if (!mb) throw new Error('MAP button has no layout box');
+  await p.touchscreen.tap(mb.x + mb.width / 2, mb.y + mb.height / 2);
+  await p.waitForSelector('.camp-map:not(.hidden)', { timeout: 3000 });
+  const closeMap = p.locator('.camp-map-close');
+  if (!(await closeMap.isVisible())) throw new Error('open camp map has no touch-accessible close/back button');
+  const cb = await closeMap.boundingBox();
+  if (!cb) throw new Error('map close button has no layout box');
+  await p.touchscreen.tap(cb.x + cb.width / 2, cb.y + cb.height / 2);
+  await p.waitForFunction(() => document.querySelector('.camp-map')?.classList.contains('hidden'), null, { timeout: 3000 });
 
   await p.evaluate(() => { window.__cg.teleport(0, 12); window.__cg.look(0); });
   await p.waitForTimeout(120);
@@ -99,7 +112,7 @@ try {
   await p.waitForFunction((id) => window.__cg.campers().some((c) => c.id === id && c.foundBy >= 0), camper.id, { timeout: 6000 });
 
   if (errors.length) throw new Error(errors.slice(0, 5).join(' | '));
-  console.log('PASS  iPad-style touch: <=1x render scale, jump, independent move/look pointers, joystick movement and USE interaction');
+  console.log('PASS  iPad-style touch: map close/back, <=1x render scale, jump, independent move/look pointers, joystick movement and USE interaction');
 } finally {
   await ctx.close().catch(() => undefined);
   await browser.close().catch(() => undefined);
