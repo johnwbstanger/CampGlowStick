@@ -6,7 +6,6 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'public',
 const required = [
   'nature/quaternius-megakit/catalog.json',
   'buildings/quaternius-modular/catalog.json',
-  'models/quaternius/camp-characters/catalog.json',
   'models/cc0-camp-props/catalog.json',
   'environment/CREDITS.json',
 ];
@@ -40,12 +39,12 @@ async function validateCatalog(rel) {
     }
   }
 }
-for (const rel of required.slice(0, 4)) await validateCatalog(rel);
+for (const rel of required.slice(0, 3)) await validateCatalog(rel);
 
 const credits = JSON.parse(await readFile(join(ROOT, 'environment/CREDITS.json'), 'utf8'));
 for (const item of credits) if (!item.license || !item.url) errors.push(`environment credit incomplete: ${JSON.stringify(item)}`);
 
-for (const top of ['nature/quaternius-megakit', 'buildings/quaternius-modular', 'models/quaternius/camp-characters', 'models/cc0-camp-props']) {
+for (const top of ['nature/quaternius-megakit', 'buildings/quaternius-modular', 'models/cc0-camp-props']) {
   const files = await readdir(join(ROOT, top));
   if (!files.length) errors.push(`${top}: empty directory`);
 }
@@ -54,4 +53,4 @@ if (errors.length) {
   console.error(`Imported asset validation failed (${errors.length}):\n- ${errors.join('\n- ')}`);
   process.exit(1);
 }
-console.log('Imported asset validation passed: licenses, catalogs, glTF dependencies, CC0 camp props and environment credits are present.');
+console.log('Imported asset validation passed: environment licenses, catalogs, glTF dependencies and CC0 camp props are present. Handmade SDF characters require no external asset pack.');
