@@ -1,4 +1,4 @@
-import { mkdir, writeFile, readFile, access, cp, readdir, rm } from 'node:fs/promises';
+import { mkdir, writeFile, access, cp, readdir, rm } from 'node:fs/promises';
 import { dirname, join, extname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -32,6 +32,25 @@ async function walk(dir) {
   }
   return out;
 }
+function unzip(zip, out) {
+  const result = spawnSync('unzip', ['-oq', zip, '-d', out], { encoding: 'utf8' });
+  if (result.status !== 0) throw new Error(`unzip failed for ${basename(zip)}: ${result.stderr || result.stdout}`);
+}
+async function expandNestedZips(root) {
+  // OpenGameArt packs commonly wrap GLB/FBX variants in child archives. Expand until no unseen
+  // nested zip remains, with a hard depth cap so malformed/self-containing archives cannot loop.
+  const seen = new Set();
+  for (let depth = 0; depth < 4; depth++) {
+    const zips = (await walk(root)).filter((p) => extname(p).toLowerCase() === '.zip' && !seen.has(p));
+    if (!zips.length) break;
+    for (const zip of zips) {
+      seen.add(zip);
+      const out = join(dirname(zip), `${basename(zip, extname(zip))}-expanded`);
+      await mkdir(out, { recursive: true });
+      unzip(zip, out);
+    }
+  }
+}
 
 await mkdir(ROOT, { recursive: true });
 const catalog = [];
@@ -40,20 +59,32 @@ for (const src of sources) {
   if (!await exists(dest)) {
     const tmp = join(tmpdir(), `campglow-${src.id}-${process.pid}`);
     await mkdir(tmp, { recursive: true });
-    const zip = join(tmp, 'source.zip');
-    const r = await fetch(src.url);
-    if (!r.ok) throw new Error(`${src.id}: ${r.status} ${src.url}`);
-    await writeFile(zip, Buffer.from(await r.arrayBuffer()));
-    const result = spawnSync('unzip', ['-oq', zip, '-d', tmp], { encoding: 'utf8' });
-    if (result.status !== 0) throw new Error(`${src.id}: unzip failed: ${result.stderr || result.stdout}`);
-    const files = await walk(tmp);
-    const candidates = files.filter((p) => src.match.test(basename(p)) && extname(p).toLowerCase() === '.glb');
-    if (!candidates.length) {
-      const names = files.filter((p) => /\.(glb|gltf|fbx)$/i.test(p)).map((p) => basename(p)).slice(0, 100);
-      throw new Error(`${src.id}: no matching GLB found. Archive models: ${names.join(', ')}`);
+    try {
+      const zip = join(tmp, 'source.zip');
+      const r = await fetch(src.url, { headers: { 'User-Agent': 'CampGlowstick-asset-import/1.0' } });
+      if (!r.ok) throw new Error(`${src.id}: ${r.status} ${src.url}`);
+      const bytes = Buffer.from(await r.arrayBuffer());
+      if (bytes.length < 256 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
+        throw new Error(`${src.id}: download was not a ZIP (${bytes.length} bytes, ${r.headers.get('content-type') ?? 'unknown content type'})`);
+      }
+      await writeFile(zip, bytes);
+      unzip(zip, tmp);
+      await expandNestedZips(tmp);
+
+      const files = await walk(tmp);
+      const models = files.filter((p) => ['.glb', '.gltf', '.fbx'].includes(extname(p).toLowerCase()));
+      const candidates = models.filter((p) => src.match.test(basename(p)) && extname(p).toLowerCase() === '.glb');
+      if (!candidates.length) {
+        const names = models.map((p) => basename(p)).slice(0, 150);
+        throw new Error(`${src.id}: no matching GLB found after nested-archive expansion. Archive models: ${names.join(', ')}`);
+      }
+      const chosen = candidates.sort((a, b) => a.length - b.length)[0];
+      const glb = await import('node:fs/promises').then((fs) => fs.readFile(chosen));
+      if (glb.length < 20 || glb.toString('ascii', 0, 4) !== 'glTF') throw new Error(`${src.id}: selected ${basename(chosen)} is not a valid binary glTF`);
+      await cp(chosen, dest);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
     }
-    await cp(candidates[0], dest);
-    await rm(tmp, { recursive: true, force: true });
   }
   catalog.push({
     id: src.id,
