@@ -1,5 +1,5 @@
 import { mkdir, writeFile, access, readFile } from 'node:fs/promises';
-import { dirname, join, relative, extname, basename } from 'node:path';
+import { dirname, join, extname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = 'agentkaerf/FreeModels';
@@ -10,13 +10,16 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'public',
 const DEST = join(ROOT, 'nature', 'quaternius-megakit');
 const CATALOG = join(DEST, 'catalog.json');
 const force = process.argv.includes('--force');
+const githubToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
 
 const exists = (p) => access(p).then(() => true, () => false);
 const raw = (path) => `https://raw.githubusercontent.com/${REPO}/${SHA}/${path.split('/').map(encodeURIComponent).join('/')}`;
 
 async function getJson(url) {
-  const r = await fetch(url, { headers: { Accept: 'application/vnd.github+json' } });
-  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'CampGlowstick-asset-import/1.0' };
+  if (githubToken) headers.Authorization = `Bearer ${githubToken}`;
+  const r = await fetch(url, { headers });
+  if (!r.ok) throw new Error(`${r.status} ${url}${r.status === 403 && !githubToken ? ' (set GITHUB_TOKEN to avoid GitHub API rate limits)' : ''}`);
   return r.json();
 }
 async function save(rel, url) {
@@ -65,8 +68,6 @@ const entries = gltfs.map((file, i) => ({
 await mkdir(DEST, { recursive: true });
 await writeFile(CATALOG, JSON.stringify({ pack: PACK, repository: REPO, commit: SHA, license: 'CC0-1.0', entries }, null, 2));
 
-// Merge the imported family into the machine-readable global catalog. This file is generated and is
-// intentionally separate from src/assets/manifest.ts, which remains the gameplay logical-name map.
 const globalPath = join(ROOT, 'manifest.json');
 let global = { version: 1, assets: [] };
 try { global = JSON.parse(await readFile(globalPath, 'utf8')); } catch {}
