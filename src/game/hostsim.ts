@@ -26,6 +26,7 @@ interface SimCamper {
   foundBy: number; rescued: boolean; boardingStage: BoardingStage; seatIndex: number;
   route: NavPoint[]; routeGoalX: number; routeGoalZ: number; routeAt: number;
 }
+type ItemSpawnPoint = [x: number, z: number, lift: number];
 export interface Sizes { get(model: string): { x: number; y: number; z: number } | undefined }
 
 const CAMPER_NEED = 7;
@@ -58,7 +59,7 @@ export class HostSim {
     private sizes: Sizes,
     private doors: Map<string, DoorView>,
     defs: ItemDef[],
-    spawnById: Map<number, [number, number]>,
+    spawnById: Map<number, ItemSpawnPoint>,
   ) {
     this.monster = newMonster(layout.monsterStart[0], layout.monsterStart[1]);
     this.world.broadphase = new CANNON.SAPBroadphase(this.world);
@@ -84,10 +85,10 @@ export class HostSim {
       body.position.set((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, (b.minZ + b.maxZ) / 2); this.world.addBody(body);
     }
     for (const d of defs) {
-      const at = spawnById.get(d.id) ?? [0, 0];
+      const at = spawnById.get(d.id) ?? [0, 0, 0];
       const sz = d.model === 'directorGun' ? { x: .3, y: .28, z: .72 } : d.kind === 'glow' ? { x: 0.04, y: 0.04, z: 0.2 } : (this.sizes.get(d.model) ?? { x: 0.3, y: 0.3, z: 0.3 });
       const extra = d.model === 'directorGun' ? .82 : 0;
-      this.addItem(d, at[0], terrainHeight(at[0], at[1], layout) + Math.max(0.03, sz.y / 2) + 0.03 + extra, at[1]);
+      this.addItem(d, at[0], terrainHeight(at[0], at[1], layout) + Math.max(0.03, sz.y / 2) + 0.03 + extra + at[2], at[1]);
       this.nextId = Math.max(this.nextId, d.id + 1);
     }
 
@@ -105,12 +106,12 @@ export class HostSim {
     for (const p of net.players) this.addPlayer(p.id, layout.spawns[p.id % layout.spawns.length]);
   }
 
-  static makeDefs(layout: Layout): { defs: ItemDef[]; spawnById: Map<number, [number, number]> } {
-    const spawnById = new Map<number, [number, number]>();
-    const defs: ItemDef[] = layout.items.map((s, i) => { spawnById.set(i + 1, [s.x, s.z]); return { id: i + 1, model: s.model, kind: s.kind, mat: propInfo(s.model).mat }; });
+  static makeDefs(layout: Layout): { defs: ItemDef[]; spawnById: Map<number, ItemSpawnPoint> } {
+    const spawnById = new Map<number, ItemSpawnPoint>();
+    const defs: ItemDef[] = layout.items.map((s, i) => { spawnById.set(i + 1, [s.x, s.z, s.lift ?? 0]); return { id: i + 1, model: s.model, kind: s.kind, mat: propInfo(s.model).mat }; });
     const gunId = defs.length + 1;
     defs.push({ id: gunId, model: 'directorGun', kind: 'prop', mat: 'metal' });
-    spawnById.set(gunId, [CAMP_PLAN.gun.x, CAMP_PLAN.gun.z]);
+    spawnById.set(gunId, [CAMP_PLAN.gun.x, CAMP_PLAN.gun.z, 0]);
     return { defs, spawnById };
   }
 
