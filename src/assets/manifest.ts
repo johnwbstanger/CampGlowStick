@@ -1,23 +1,13 @@
 // Logical name -> imported environment/prop model (relative to public/assets/). `h` / `w` normalise to metres.
-// Player/camper presentation is intentionally NOT sourced here: src/game/campers.ts is the canonical
-// handmade SDF character system.
+// Counselor/camper presentation is intentionally absent: src/game/campers.ts is the canonical handmade SDF system.
 export interface AssetDef { file: string; h?: number; w?: number; format?: 'glb' | 'fbx' }
 
 const k = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/${file}.glb`, format: 'glb', ...fit });
 const q = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/quaternius/${file}.fbx`, format: 'fbx', ...fit });
 const oa = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/openagents/${file}.glb`, format: 'glb', ...fit });
 const cc0 = (file: string, fit: { h?: number; w?: number }): AssetDef => ({ file: `models/cc0-camp-props/${file}.glb`, format: 'glb', ...fit });
-const CHARS = 'abcdefgh'.split('');
 
 export const MANIFEST = {
-  // Legacy blocky models remain addressable for backwards-compatible tests/debugging only. Gameplay
-  // counselors and rescued campers use the handmade SDF actors in src/game/campers.ts.
-  ...Object.fromEntries(CHARS.map((c, i) => [`camper${i + 1}`, k(`blocky-characters/character-${c}`, { h: 1.7 })])),
-  camperMale: q('Smooth_Male_Casual', { h: 1.28 }),
-  camperFemale: q('Smooth_Female_Casual', { h: 1.24 }),
-  counselorMale: q('Smooth_Male_Shirt', { h: 1.82 }),
-  counselorFemale: q('Smooth_Female_Casual', { h: 1.74 }),
-
   monster: k('graveyard/character-zombie', { h: 2.2 }),
   cabin: oa('log_cabin', { w: 8.0 }),
   shed: oa('woodshed', { w: 5.0 }),
@@ -67,5 +57,4 @@ export const ALWAYS_PRELOAD: AssetName[] = [
   'cabin', 'shed', 'boathouse', 'trailShelter', 'lodge', 'groundBrush',
 ];
 export const HDRI_FILE = 'hdri/venice_sunset_1k.hdr';
-export const camperName = (i: number): AssetName => `camper${(i % CHARS.length) + 1}` as AssetName;
 export const assetUrl = (rel: string): string => `${import.meta.env.BASE_URL}assets/${rel}`;
