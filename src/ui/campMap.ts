@@ -17,15 +17,26 @@ export class CampMap {
 
   constructor(private layout: Layout) {
     this.root.className = 'camp-map hidden';
+    const titleBar = document.createElement('div');
+    titleBar.className = 'camp-map-titlebar';
     const title = document.createElement('div');
     title.className = 'camp-map-title';
     title.textContent = 'CAMP GLOWSTICK — STAFF MAP';
+    const close = document.createElement('button');
+    close.className = 'camp-map-close';
+    close.type = 'button';
+    close.textContent = 'CLOSE ×';
+    close.setAttribute('aria-label', 'Close camp map');
+    close.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.hide(); });
+    close.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); this.hide(); });
+    titleBar.append(title, close);
+
     this.canvas.width = 760; this.canvas.height = 620;
     this.ctx = this.canvas.getContext('2d')!;
     const hint = document.createElement('div');
     hint.className = 'camp-map-hint';
-    hint.textContent = 'M to close · counselors are marked · campers are not';
-    this.root.append(title, this.canvas, hint);
+    hint.textContent = 'M or CLOSE to put map away · counselors are marked · campers are not';
+    this.root.append(titleBar, this.canvas, hint);
     this.draw();
   }
 
